@@ -62,13 +62,18 @@ fun HealthReport.toObsidianBlock(): String {
     """.trimIndent()
 }
 
+// Name des Daily-Notes-Ordners im Vault. Wird zur Laufzeit in eine Drive-Ordner-ID aufgelöst,
+// damit ein Kontowechsel oder ein verschobener Ordner keine Code-Änderung mehr braucht.
+private const val DAILY_NOTES_FOLDER = "05 Daily Notes"
+
 var selectedDate by mutableStateOf(LocalDate.now())
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var healthDataStore: HealthDataStore
     private var googleDriveService: com.google.api.services.drive.Drive? = null
-    private val driveHelper by lazy { googleDriveService?.let { DriveServiceHelper(it) } }
+    // Eine dauerhafte Instanz, damit die aufgelöste Ordner-ID über mehrere Syncs erhalten bleibt.
+    private var driveHelper: DriveServiceHelper? = null
 
     private val signInLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
         val task = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(result.data)
@@ -93,6 +98,29 @@ class MainActivity : ComponentActivity() {
             com.google.api.client.json.gson.GsonFactory.getDefaultInstance(),
             credential
         ).setApplicationName("SyncHealth").build()
+
+        driveHelper = DriveServiceHelper(googleDriveService!!)
+        Log.d("Drive", "Angemeldet als ${account.email}")
+    }
+
+    private fun googleSignInClient(): com.google.android.gms.auth.api.signin.GoogleSignInClient {
+        val gso = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(
+            com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
+        )
+            .requestEmail()
+            .requestScopes(com.google.android.gms.common.api.Scope(com.google.api.services.drive.DriveScopes.DRIVE))
+            .build()
+        return com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(this, gso)
+    }
+
+    // Ohne Abmelden nimmt Google stillschweigend das zuletzt benutzte Konto - beim Kontowechsel
+    // (Vault liegt jetzt in einem anderen Drive) landet man sonst wieder im alten.
+    private fun switchGoogleAccount() {
+        googleSignInClient().signOut().addOnCompleteListener {
+            googleDriveService = null
+            driveHelper = null
+            requestGoogleSignIn()
+        }
     }
     // UI State
     var healthReport by mutableStateOf(HealthReport())
@@ -119,21 +147,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestGoogleSignIn() {
-        // 1. Konfiguration: Was wollen wir von Google? (E-Mail und Zugriff auf Drive-Dateien)
-        val gso = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(
-            com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
-        )
-            .requestEmail()
-            // DRIVE_FILE erlaubt Zugriff auf Dateien, die mit dieser App geöffnet/erstellt wurden
-            .requestScopes(com.google.android.gms.common.api.Scope(com.google.api.services.drive.DriveScopes.DRIVE))
-            .build()
-
-        // 2. Den Google-Client erstellen
-        val googleSignInClient = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(this, gso)
-
-        // 3. Den Login-Prozess starten
-        // Das triggert den 'signInLauncher', den wir vorhin oben in der Klasse definiert haben
-        signInLauncher.launch(googleSignInClient.signInIntent)
+        // Startet den Login-Prozess und triggert damit den oben definierten 'signInLauncher'
+        signInLauncher.launch(googleSignInClient().signInIntent)
     }
 
     // 2. Die "Brücke": Macht aus Samsung-Callbacks moderne Coroutines
@@ -239,19 +254,17 @@ class MainActivity : ComponentActivity() {
                     sugar = totalSugar,
                     )
 
-                if (googleDriveService == null) {
+                val helper = driveHelper
+                if (helper == null) {
                     // Falls wir noch nicht eingeloggt sind: Login-Fenster öffnen
                     requestGoogleSignIn()
                 } else {
                     // Wenn eingeloggt: Daten hochladen
-                    lifecycleScope.launch {
-                        try {
-                            val today = selectedDate.toString() // Format: 2026-03-31
-                            DriveServiceHelper(googleDriveService!!).updateDailyNote(today, healthReport)
-                            // Optional: Ein Toast zur Bestätigung
-                        } catch (e: Exception) {
-                            Log.e("Drive", "Fehler beim Upload: ${e.message}")
-                        }
+                    try {
+                        val today = selectedDate.toString() // Format: 2026-03-31
+                        helper.updateDailyNote(today, healthReport)
+                    } catch (e: Exception) {
+                        Log.e("Drive", "Fehler beim Upload: ${e.message}")
                     }
                 }
 
@@ -266,56 +279,124 @@ class MainActivity : ComponentActivity() {
 
     class DriveServiceHelper(private val driveService: com.google.api.services.drive.Drive) {
 
-        suspend fun updateDailyNote(date: String, report: HealthReport) = withContext(Dispatchers.IO) {
+        // Einmal aufgelöste Ordner-ID, damit nicht jeder Sync erneut suchen muss.
+        private var dailyNotesFolderId: String? = null
+
+        private fun resolveDailyNotesFolder(): String? {
+            dailyNotesFolderId?.let { return it }
+
+            val query = "name = '$DAILY_NOTES_FOLDER' and " +
+                    "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            val folders = driveService.files().list()
+                .setQ(query)
+                .setSpaces("drive")
+                .setFields("files(id, name)")
+                .execute().files
+
+            if (folders.isNullOrEmpty()) {
+                Log.e("Drive", "Ordner '$DAILY_NOTES_FOLDER' nicht gefunden - falsches Google-Konto?")
+                return null
+            }
+            if (folders.size > 1) {
+                Log.w("Drive", "Mehrere Ordner '$DAILY_NOTES_FOLDER' gefunden (${folders.size}), nehme den ersten.")
+            }
+            return folders[0].id.also { dailyNotesFolderId = it }
+        }
+
+        // Kein mimeType-Filter: das Obsidian-Plugin lädt .md nicht zwingend als text/markdown hoch.
+        private fun findInFolder(date: String, parentId: String): String? {
+            val query = "name = '$date.md' and '$parentId' in parents and trashed = false"
+            return driveService.files().list()
+                .setQ(query)
+                .setSpaces("drive")
+                .setFields("files(id, name)")
+                .execute().files?.firstOrNull()?.id
+        }
+
+        // Der aktuelle Monat liegt lose im Daily-Notes-Ordner, ältere Monate im Unterordner "YYYY-MM".
+        private fun findNoteId(date: String, parentId: String): String? {
+            findInFolder(date, parentId)?.let { return it }
+
+            val monthFolder = date.substring(0, 7)
+            val monthQuery = "name = '$monthFolder' and '$parentId' in parents and " +
+                    "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            val monthId = driveService.files().list()
+                .setQ(monthQuery)
+                .setSpaces("drive")
+                .setFields("files(id)")
+                .execute().files?.firstOrNull()?.id ?: return null
+
+            return findInFolder(date, monthId)
+        }
+
+        private fun headRevision(fileId: String): String? =
+            driveService.files().get(fileId).setFields("headRevisionId").execute().headRevisionId
+
+        private fun patch(content: String, report: HealthReport): String {
+            val replacements = mapOf(
+                "Kalorien::" to " ${report.calories.toInt()}",
+                "Schritte::" to " ${report.steps}",
+                // Wir fügen Locale.US hinzu, um den Punkt zu erzwingen:
+                "Zucker::" to " ${String.format(java.util.Locale.US, "%.1f", report.sugar)}",
+                "Protein::" to " ${String.format(java.util.Locale.US, "%.1f", report.protein)}",
+                "Fett::" to " ${String.format(java.util.Locale.US, "%.1f", report.fat)}",
+                "Wasser::" to " ${String.format(java.util.Locale.US, "%.1f", report.water/1000)}",
+                "Ballaststoffe::" to " ${String.format(java.util.Locale.US, "%.1f", report.fiber)}",
+                "Schlaf::" to " ${String.format(java.util.Locale.US, "%.1f", report.sleep)}"
+            )
+
+            var updatedContent = content
+            replacements.forEach { (key, value) ->
+                val regex = Regex("$key.*")
+                if (updatedContent.contains(key)) {
+                    Log.d("Drive", "Ersetze $key mit $value")
+                    updatedContent = updatedContent.replace(regex, "$key$value")
+                } else {
+                    Log.e("Drive", "SCHLÜSSEL NICHT GEFUNDEN: $key")
+                }
+            }
+            return updatedContent
+        }
+
+        suspend fun updateDailyNote(date: String, report: HealthReport): Unit = withContext(Dispatchers.IO) {
             try {
-                // 1. Suche nach der Datei "YYYY-MM-DD.md"
-                val folderId = "1UiQDHtrQptXy75h2RQtTPqDihQzW9Tet"
+                val folderId = resolveDailyNotesFolder() ?: return@withContext
 
-                val query = "name = '$date.md' and '$folderId' in parents and mimeType = 'text/markdown' and trashed = false"
-                val files = driveService.files().list()
-                    .setQ(query)
-                    .setSpaces("drive") // Sucht im normalen Drive-Speicher
-                    .execute().files
-
-                if (files.isNullOrEmpty()) {
+                val fileId = findNoteId(date, folderId)
+                if (fileId == null) {
                     Log.e("Drive", "Datei $date.md nicht gefunden!")
                     return@withContext
                 }
 
-                val fileId = files[0].id
-                val outputStream = ByteArrayOutputStream()
-                driveService.files().get(fileId).executeMediaAndDownloadTo(outputStream)
-                val content = outputStream.toString("UTF-8")
+                // Wir laden direkt vor dem Upload die Revision erneut und brechen ab, wenn die Datei
+                // sich zwischendurch geändert hat. Ohne das würden wir fremde Änderungen (z.B. Notizen,
+                // die parallel vom Handy synchronisiert wurden) mit unserem alten Stand überschreiben.
+                repeat(3) { attempt ->
+                    val revisionBefore = headRevision(fileId)
 
-                // 2. Präzises Ersetzen
-                val replacements = mapOf(
-                    "Kalorien::" to " ${report.calories.toInt()}",
-                    "Schritte::" to " ${report.steps}",
-                    // Wir fügen Locale.US hinzu, um den Punkt zu erzwingen:
-                    "Zucker::" to " ${String.format(java.util.Locale.US, "%.1f", report.sugar)}",
-                    "Protein::" to " ${String.format(java.util.Locale.US, "%.1f", report.protein)}",
-                    "Fett::" to " ${String.format(java.util.Locale.US, "%.1f", report.fat)}",
-                    "Wasser::" to " ${String.format(java.util.Locale.US, "%.1f", report.water/1000)}",
-                    "Ballaststoffe::" to " ${String.format(java.util.Locale.US, "%.1f", report.fiber)}",
-                    "Schlaf::" to " ${String.format(java.util.Locale.US, "%.1f", report.sleep)}"
-                )
+                    val outputStream = ByteArrayOutputStream()
+                    driveService.files().get(fileId).executeMediaAndDownloadTo(outputStream)
+                    val content = outputStream.toString("UTF-8")
 
-                var updatedContent = content
-                replacements.forEach { (key, value) ->
-                    val regex = Regex("$key.*")
-                    if (updatedContent.contains(key)) {
-                        Log.d("Drive", "Ersetze $key mit $value")
-                        updatedContent = updatedContent.replace(regex, "$key$value")
-                    } else {
-                        Log.e("Drive", "SCHLÜSSEL NICHT GEFUNDEN: $key")
+                    val updatedContent = patch(content, report)
+                    if (updatedContent == content) {
+                        Log.d("Drive", "Keine Änderung nötig für $date.")
+                        return@withContext
                     }
+
+                    if (headRevision(fileId) != revisionBefore) {
+                        Log.w("Drive", "$date.md wurde während des Syncs geändert - Versuch ${attempt + 1} wird wiederholt.")
+                        return@repeat
+                    }
+
+                    val mediaContent = com.google.api.client.http.ByteArrayContent.fromString("text/markdown", updatedContent)
+                    driveService.files().update(fileId, null, mediaContent).execute()
+
+                    Log.d("Drive", "Update für $date erfolgreich hochgeladen!")
+                    return@withContext
                 }
 
-                // 3. Update hochladen
-                val mediaContent = com.google.api.client.http.ByteArrayContent.fromString("text/markdown", updatedContent)
-                driveService.files().update(fileId, null, mediaContent).execute()
-
-                Log.d("Drive", "Update für $selectedDate erfolgreich hochgeladen!")
+                Log.e("Drive", "Update für $date abgebrochen: Datei wurde dreimal parallel geändert.")
             } catch (e: Exception) {
                 Log.e("Drive", "Fehler während des Drive-Updates: ${e.message}")
             }
@@ -379,6 +460,10 @@ class MainActivity : ComponentActivity() {
                     enabled = !isSyncing
                 ) {
                     Text(if (isSyncing) "Lade $selectedDate..." else "Sync $selectedDate")
+                }
+
+                TextButton(onClick = { switchGoogleAccount() }, enabled = !isSyncing) {
+                    Text("Google-Konto wechseln")
                 }
             }
 
