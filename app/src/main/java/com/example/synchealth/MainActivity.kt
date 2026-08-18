@@ -140,7 +140,7 @@ class MainActivity : ComponentActivity() {
         }
         is DailyNoteSync.Outcome.NothingToDo -> "$selectedDate stand schon richtig da."
         is DailyNoteSync.Outcome.NoteMissing ->
-            "Tagesnotiz $selectedDate gibt es nicht, weder flach noch im Monatsordner."
+            "Tagesnotiz $selectedDate gibt es nicht."
         DailyNoteSync.Outcome.Unauthorized -> "Anmeldung abgelehnt. App-Passwort prüfen."
         DailyNoteSync.Outcome.Conflict ->
             "$selectedDate wurde zweimal parallel geändert. Nochmal versuchen."
