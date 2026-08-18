@@ -7,6 +7,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import android.util.Log
 import java.io.IOException
 
 /**
@@ -49,13 +50,30 @@ class WebDavClient(
 
     /** [path] ist relativ zur Basis, unkodiert, z.B. "05 Daily Notes/2026-08-18.md". */
     fun get(path: String): GetResult {
-        val request = Request.Builder().url(url(path)).header("Authorization", auth).get().build()
+        val target = url(path)
+        val request = Request.Builder()
+            .url(target)
+            .header("Authorization", auth)
+            // Ohne diese Zeile setzt OkHttp von sich aus "Accept-Encoding: gzip". Der Server
+            // liefert die Antwort dann komprimiert und schwaecht dabei den ETag zu W/"...".
+            // Ein schwacher ETag ist fuer If-Match nicht zulaessig, der Vergleich dort ist ein
+            // starker, und der PUT scheitert danach zuverlaessig mit 412. Belegt am 18.08.2026:
+            // derselbe GET liefert "9090f5ad..." ohne und W/"9090f5ad..." mit Komprimierung.
+            // Die Notizen sind Kilobytes, der Verzicht kostet also nichts.
+            .header("Accept-Encoding", "identity")
+            .get()
+            .build()
         return try {
             http.newCall(request).execute().use { response ->
+                val etag = response.header("ETag")
+                Log.d(TAG, "GET $target -> ${response.code} (ETag $etag)")
+                if (etag != null && etag.startsWith("W/")) {
+                    Log.w(TAG, "Schwacher ETag, If-Match wird daran scheitern: $etag")
+                }
                 when {
                     response.isSuccessful -> GetResult.Found(
                         content = response.body?.bytes()?.toString(Charsets.UTF_8).orEmpty(),
-                        etag = response.header("ETag"),
+                        etag = etag,
                     )
                     response.code == 404 -> GetResult.NotFound
                     response.code == 401 -> GetResult.Unauthorized
@@ -63,6 +81,7 @@ class WebDavClient(
                 }
             }
         } catch (e: IOException) {
+            Log.e(TAG, "GET $target fehlgeschlagen: ${e.message}")
             GetResult.Failed(NO_RESPONSE, e.message ?: "keine Verbindung")
         }
     }
@@ -73,15 +92,17 @@ class WebDavClient(
      * das Nachlesen der Revision vor dem Upload, das unter Drive noetig war.
      */
     fun put(path: String, content: String, etag: String?): PutResult {
+        val target = url(path)
         val body = content.toRequestBody(MARKDOWN)
         val request = Request.Builder()
-            .url(url(path))
+            .url(target)
             .header("Authorization", auth)
             .apply { if (etag != null) header("If-Match", etag) }
             .put(body)
             .build()
         return try {
             http.newCall(request).execute().use { response ->
+                Log.d(TAG, "PUT $target (If-Match $etag) -> ${response.code}")
                 when {
                     response.isSuccessful -> PutResult.Written
                     response.code == 412 -> PutResult.Conflict
@@ -90,6 +111,7 @@ class WebDavClient(
                 }
             }
         } catch (e: IOException) {
+            Log.e(TAG, "PUT $target fehlgeschlagen: ${e.message}")
             PutResult.Failed(NO_RESPONSE, e.message ?: "keine Verbindung")
         }
     }
@@ -103,6 +125,7 @@ class WebDavClient(
     companion object {
         /** Kein HTTP-Status, sondern gar keine Antwort: Funkloch, DNS, Tunnel unten. */
         const val NO_RESPONSE = 0
+        private const val TAG = "SyncHealth"
         private val MARKDOWN = "text/markdown; charset=utf-8".toMediaType()
     }
 }

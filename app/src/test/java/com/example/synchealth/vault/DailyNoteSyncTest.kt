@@ -188,4 +188,17 @@ class DailyNoteSyncTest {
         server.takeRequest()
         assertNull(server.takeRequest().getHeader("If-Match"))
     }
+
+    @Test
+    fun `der GET verzichtet auf Komprimierung, damit der ETag stark bleibt`() {
+        server.enqueue(notiz(leereNotiz, "\"v1\""))
+        server.enqueue(status(204))
+
+        sync.sync(date, report)
+
+        // Mit "Accept-Encoding: gzip" schwaecht der Server den ETag zu W/"..." ab, und
+        // damit scheitert jedes If-Match. Das hat am 18.08.2026 den ersten Geraetetest
+        // gekostet, deshalb steht der Header hier fest.
+        assertEquals("identity", server.takeRequest().getHeader("Accept-Encoding"))
+    }
 }
