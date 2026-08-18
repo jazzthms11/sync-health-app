@@ -126,6 +126,7 @@ class NotePatcherTest {
         val result = NotePatcher.patch(ohneSchlaf, report)
 
         assertEquals(listOf("Schlaf"), result.missing)
+        assertEquals(emptyList<String>(), result.skipped)
         assertEquals(7, result.patched.size)
     }
 
@@ -149,5 +150,37 @@ class NotePatcherTest {
 
         assertTrue(result.content.contains("- Schritte:: 8342\r\n"))
         assertFalse("Es darf kein nacktes LF entstehen", result.content.contains(Regex("[^\r]\n")))
+    }
+
+    @Test
+    fun `eine Null laesst die Zeile unangetastet`() {
+        val result = NotePatcher.patch(template, HealthReport())
+
+        assertEquals(template, result.content)
+        assertTrue(result.unchanged)
+        assertEquals(8, result.skipped.size)
+        assertEquals(emptyList<String>(), result.missing)
+    }
+
+    @Test
+    fun `eine Null ueberschreibt keinen bestehenden Wert`() {
+        val getippt = template.replace("- Kalorien:: ", "- Kalorien:: 2100")
+        val result = NotePatcher.patch(getippt, report.copy(calories = 0.0))
+
+        assertTrue(
+            "Der von Hand eingetragene Wert muss stehen bleiben",
+            result.content.contains("- Kalorien:: 2100"),
+        )
+        assertTrue(result.skipped.contains("Kalorien"))
+    }
+
+    @Test
+    fun `ein auf Null gerundeter Wert wird nicht geschrieben`() {
+        val result = NotePatcher.patch(template, HealthReport(protein = 0.04, calories = 0.6))
+
+        assertTrue(result.skipped.contains("Protein"))
+        assertTrue(result.skipped.contains("Kalorien"))
+        assertTrue(result.content.contains("- Protein:: \n"))
+        assertTrue(result.content.contains("- Kalorien:: \n"))
     }
 }
