@@ -33,35 +33,6 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 
-data class HealthReport(
-    val steps: Long = 0,
-    val calories: Double = 0.0,
-    val water: Double = 0.0,
-    val sleep: Double = 0.0,
-    val protein: Double = 0.0,
-    val fat: Double = 0.0,
-    val fiber: Double = 0.0,
-    val sugar: Double = 0.0,
-)
-
-fun HealthReport.toObsidianBlock(): String {
-    return """
-        # Gesundheit
-        - Gewicht:: 
-        - Schlaf:: ${String.format("%.2f", this.sleep)}
-        - Schritte:: ${this.steps}
-        - Screen Time:: 
-
-        # Essen
-        - Kalorien:: ${this.calories.toInt()}
-        - Protein:: ${String.format("%.1f", this.protein)}
-        - Ballaststoffe:: ${String.format("%.1f", this.fiber)}
-        - Fett:: ${String.format("%.1f", this.fat)}
-        - Zucker:: ${String.format("%.1f", this.sugar)}
-        - Wasser:: ${String.format("%.1f", this.water)}
-    """.trimIndent()
-}
-
 // Name des Daily-Notes-Ordners im Vault. Wird zur Laufzeit in eine Drive-Ordner-ID aufgelöst,
 // damit ein Kontowechsel oder ein verschobener Ordner keine Code-Änderung mehr braucht.
 private const val DAILY_NOTES_FOLDER = "05 Daily Notes"
