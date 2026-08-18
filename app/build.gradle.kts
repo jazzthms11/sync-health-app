@@ -1,7 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    id("kotlin-parcelize")
 }
 
 android {
@@ -71,15 +70,6 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(files("libs/samsung-health-data-api-1.1.0.aar"))
-    implementation("org.jetbrains.kotlin:kotlin-parcelize-runtime:1.9.22")
-    implementation("com.google.code.gson:gson:2.10.1")
-    implementation("com.google.android.gms:play-services-auth:20.7.0")
-    implementation("com.google.api-client:google-api-client-android:2.2.0")
-    implementation("com.google.apis:google-api-services-drive:v3-rev20230822-2.0.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
-    // Das hier wird für den "GsonFactory" Teil und die Credentials benötigt
-    implementation("com.google.api-client:google-api-client-gson:2.2.0")
-    implementation("com.google.auth:google-auth-library-oauth2-http:1.19.0")
 
     // WebDAV-Transport
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
