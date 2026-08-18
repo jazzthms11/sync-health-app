@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Kommt bisher nur ueber die Manifeste der Google-Bibliotheken herein. Faellt mit ihnen weg. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <uses-permission android:name="com.samsung.android.providers.context.permission.WRITE_USE_APP_FEATURE_SURVEY" />
     <uses-permission android:name="com.samsung.health.permission.read" />
     <application

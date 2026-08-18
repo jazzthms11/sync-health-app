@@ -80,4 +80,9 @@ dependencies {
     // Das hier wird für den "GsonFactory" Teil und die Credentials benötigt
     implementation("com.google.api-client:google-api-client-gson:2.2.0")
     implementation("com.google.auth:google-auth-library-oauth2-http:1.19.0")
+
+    // WebDAV-Transport
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
