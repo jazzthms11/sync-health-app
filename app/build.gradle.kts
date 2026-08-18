@@ -69,7 +69,14 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    // Das Samsung-SDK ist als Datei eingebunden und bringt deshalb KEINE transitiven
+    // Abhaengigkeiten mit. Was seine Klassen brauchen, muss hier von Hand danebenstehen.
+    // Belegt am 18.08.2026 durch einen Scan der classes.jar im AAR: kotlinx.parcelize,
+    // com.google.gson und kotlinx.coroutines. Fehlt eines davon, kompiliert die App
+    // anstandslos und stirbt erst zur Laufzeit mit NoClassDefFoundError.
     implementation(files("libs/samsung-health-data-api-1.1.0.aar"))
+    implementation("org.jetbrains.kotlin:kotlin-parcelize-runtime:1.9.22")
+    implementation("com.google.code.gson:gson:2.10.1")
 
     // WebDAV-Transport
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
