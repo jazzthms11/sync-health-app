@@ -12,7 +12,16 @@ import java.time.LocalDate
  *
  * **Blockierend**, gehoert auf einen IO-Thread.
  */
-class DailyNoteSync(private val client: WebDavClient) {
+class DailyNoteSync(
+    private val client: WebDavClient,
+    dailyNotes: String = DEFAULT_DAILY_NOTES,
+) {
+
+    /**
+     * Der Ordner der Tagesnotizen, ohne Schraegstriche an den Raendern. Leer ist gueltig
+     * und heisst: Die Notizen liegen direkt unter der Basis-URL.
+     */
+    private val folder: String = dailyNotes.trim().trim('/')
 
     sealed interface Outcome {
         /** Geschrieben. [skipped] hatte keine Daten, [missing] keine Zeile in der Notiz. */
@@ -69,13 +78,13 @@ class DailyNoteSync(private val client: WebDavClient) {
     }
 
     /**
-     * Neue Tagesnotizen liegen flach in "05 Daily Notes", fertig nachgetragene im
-     * Monatsordner "YYYY-MM". Welche der beiden gilt, entscheidet Leo von Hand, die App
-     * muss also beide Orte kennen und darf keinen davon anlegen.
+     * Neue Tagesnotizen liegen flach im eingestellten Ordner, fertig nachgetragene im
+     * Monatsordner "YYYY-MM" darunter. Welche der beiden gilt, entscheidet Leo von Hand,
+     * die App muss also beide Orte kennen und darf keinen davon anlegen.
      */
     private fun locate(date: LocalDate): Located {
         val name = "$date.md"
-        val flat = "$DAILY_NOTES/$name"
+        val flat = path(name)
         when (val first = client.get(flat)) {
             is WebDavClient.GetResult.Found -> return Located.Found(flat, first.content, first.etag)
             WebDavClient.GetResult.Unauthorized -> return Located.Unauthorized
@@ -83,7 +92,7 @@ class DailyNoteSync(private val client: WebDavClient) {
             WebDavClient.GetResult.NotFound -> Unit // weiter im Monatsordner
         }
 
-        val inMonth = "$DAILY_NOTES/${name.substring(0, 7)}/$name"
+        val inMonth = path(name.substring(0, 7), name)
         return when (val second = client.get(inMonth)) {
             is WebDavClient.GetResult.Found -> Located.Found(inMonth, second.content, second.etag)
             WebDavClient.GetResult.NotFound -> Located.Missing
@@ -92,7 +101,16 @@ class DailyNoteSync(private val client: WebDavClient) {
         }
     }
 
+    /** Setzt den Pfad zusammen und laesst einen leeren Ordner dabei weg. */
+    private fun path(vararg parts: String): String =
+        (listOf(folder) + parts).filter { it.isNotEmpty() }.joinToString("/")
+
     companion object {
-        const val DAILY_NOTES = "05 Daily Notes"
+        /**
+         * Wo die Tagesnotizen liegen, solange nichts anderes eingestellt ist. Steht hier
+         * und nicht in den Einstellungen, damit dieses Paket ohne Android-Abhaengigkeit
+         * pruefbar bleibt.
+         */
+        const val DEFAULT_DAILY_NOTES = "05 Daily Notes"
     }
 }

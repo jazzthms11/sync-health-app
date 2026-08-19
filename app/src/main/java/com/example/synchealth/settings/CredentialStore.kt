@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.example.synchealth.vault.DailyNoteSync
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -16,6 +17,8 @@ data class VaultAccess(
     val baseUrl: String,
     val username: String,
     val password: String,
+    /** Ordner der Tagesnotizen, relativ zur Basis-URL. Leer heisst: direkt im Vault-Root. */
+    val dailyNotes: String = DailyNoteSync.DEFAULT_DAILY_NOTES,
 )
 
 /**
@@ -36,7 +39,10 @@ class CredentialStore(context: Context) {
         val user = prefs.getString(KEY_USER, null) ?: return null
         val secret = prefs.getString(KEY_PASSWORD, null) ?: return null
         val password = decrypt(secret) ?: return null
-        return VaultAccess(url, user, password)
+        // Bewusst kein "?: return null": Eine Installation von vor diesem Feld hat den
+        // Schluessel nicht und wuerde sonst ihren ganzen Zugang verlieren.
+        val folder = prefs.getString(KEY_FOLDER, null) ?: DailyNoteSync.DEFAULT_DAILY_NOTES
+        return VaultAccess(url, user, password, folder)
     }
 
     fun save(access: VaultAccess) {
@@ -44,6 +50,9 @@ class CredentialStore(context: Context) {
             .putString(KEY_URL, access.baseUrl.trimEnd('/'))
             .putString(KEY_USER, access.username)
             .putString(KEY_PASSWORD, encrypt(access.password))
+            // Schraegstriche an den Raendern raus, sonst entsteht beim Zusammensetzen
+            // des Pfads ein leeres Segment.
+            .putString(KEY_FOLDER, access.dailyNotes.trim().trim('/'))
             .apply()
     }
 
@@ -88,6 +97,7 @@ class CredentialStore(context: Context) {
         private const val KEY_URL = "basis_url"
         private const val KEY_USER = "benutzer"
         private const val KEY_PASSWORD = "app_passwort"
+        private const val KEY_FOLDER = "tagesnotizen"
         private const val KEYSTORE = "AndroidKeyStore"
         private const val ALIAS = "synchealth-vault"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"

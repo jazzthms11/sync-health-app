@@ -112,7 +112,7 @@ class MainActivity : ComponentActivity() {
                 healthReport = repo.read(selectedDate)
                 val outcome = withContext(Dispatchers.IO) {
                     val client = WebDavClient(access.baseUrl, access.username, access.password)
-                    DailyNoteSync(client).sync(selectedDate, healthReport)
+                    DailyNoteSync(client, access.dailyNotes).sync(selectedDate, healthReport)
                 }
                 Log.d(TAG, "Sync $selectedDate: $outcome")
                 snackbar.showSnackbar(describe(outcome))
@@ -244,6 +244,9 @@ private fun SettingsDialog(
     var url by remember { mutableStateOf(initial?.baseUrl ?: "https://") }
     var user by remember { mutableStateOf(initial?.username.orEmpty()) }
     var password by remember { mutableStateOf(initial?.password.orEmpty()) }
+    var folder by remember {
+        mutableStateOf(initial?.dailyNotes ?: DailyNoteSync.DEFAULT_DAILY_NOTES)
+    }
     var fehler by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
@@ -271,6 +274,14 @@ private fun SettingsDialog(
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                 )
+                OutlinedTextField(
+                    value = folder,
+                    onValueChange = { folder = it; fehler = null },
+                    label = { Text("Ordner der Tagesnotizen") },
+                    placeholder = { Text(DailyNoteSync.DEFAULT_DAILY_NOTES) },
+                    supportingText = { Text("Leer lassen, wenn sie direkt im Vault-Root liegen.") },
+                    singleLine = true,
+                )
                 fehler?.let {
                     Text(text = it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                 }
@@ -285,7 +296,8 @@ private fun SettingsDialog(
                         else -> null
                     }
                 if (problem != null) fehler = problem
-                else onSave(VaultAccess(url.trim(), user.trim(), password))
+                // Der Ordner wird bewusst nicht geprueft, leer ist ein gueltiger Wert.
+                else onSave(VaultAccess(url.trim(), user.trim(), password, folder.trim()))
             }) { Text("Speichern") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },

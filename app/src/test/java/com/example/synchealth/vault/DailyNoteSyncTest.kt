@@ -18,6 +18,7 @@ import java.time.LocalDate
 class DailyNoteSyncTest {
 
     private lateinit var server: MockWebServer
+    private lateinit var client: WebDavClient
     private lateinit var sync: DailyNoteSync
 
     private val date: LocalDate = LocalDate.of(2026, 8, 18)
@@ -53,7 +54,7 @@ class DailyNoteSyncTest {
     fun setUp() {
         server = MockWebServer()
         server.start()
-        val client = WebDavClient(
+        client = WebDavClient(
             baseUrl = server.url("/remote.php/dav/files/leo/second-brain/").toString(),
             username = "leo",
             password = "geheim",
@@ -200,5 +201,51 @@ class DailyNoteSyncTest {
         // damit scheitert jedes If-Match. Das hat am 18.08.2026 den ersten Geraetetest
         // gekostet, deshalb steht der Header hier fest.
         assertEquals("identity", server.takeRequest().getHeader("Accept-Encoding"))
+    }
+
+    @Test
+    fun `ein abweichender Ordner landet im richtigen Pfad`() {
+        server.enqueue(notiz(leereNotiz, "\"v1\""))
+        server.enqueue(status(204))
+
+        DailyNoteSync(client, "Journal/Tage").sync(date, report)
+
+        assertEquals(
+            "/remote.php/dav/files/leo/second-brain/Journal/Tage/2026-08-18.md",
+            server.takeRequest().path,
+        )
+    }
+
+    @Test
+    fun `ohne Ordner liegen die Notizen direkt unter der Basis-URL`() {
+        server.enqueue(status(404))
+        server.enqueue(notiz(leereNotiz, "\"v1\""))
+        server.enqueue(status(204))
+
+        DailyNoteSync(client, "").sync(date, report)
+
+        assertEquals(
+            "/remote.php/dav/files/leo/second-brain/2026-08-18.md",
+            server.takeRequest().path,
+        )
+        // Der Monatsordner-Rueckfall haengt am Dateinamen und nicht am Ordner. Er bleibt
+        // deshalb auch dann erhalten, wenn gar kein Ordner davorsteht.
+        assertEquals(
+            "/remote.php/dav/files/leo/second-brain/2026-08/2026-08-18.md",
+            server.takeRequest().path,
+        )
+    }
+
+    @Test
+    fun `Schraegstriche am Rand des Ordners erzeugen kein leeres Segment`() {
+        server.enqueue(notiz(leereNotiz, "\"v1\""))
+        server.enqueue(status(204))
+
+        DailyNoteSync(client, "/05 Daily Notes/").sync(date, report)
+
+        assertEquals(
+            "/remote.php/dav/files/leo/second-brain/05%20Daily%20Notes/2026-08-18.md",
+            server.takeRequest().path,
+        )
     }
 }
