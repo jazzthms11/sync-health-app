@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.example.synchealth.health.HealthRepository
+import com.example.synchealth.health.ScreenTimeReader
 import com.example.synchealth.settings.CredentialStore
 import com.example.synchealth.settings.VaultAccess
 import com.example.synchealth.ui.theme.SyncHealthTheme
@@ -35,11 +36,13 @@ class MainActivity : ComponentActivity() {
 
     private var health: HealthRepository? = null
     private lateinit var credentials: CredentialStore
+    private lateinit var screenTime: ScreenTimeReader
 
     private var selectedDate by mutableStateOf(LocalDate.now())
     private var healthReport by mutableStateOf(HealthReport())
     private var isSyncing by mutableStateOf(false)
     private var showSettings by mutableStateOf(false)
+    private var hasScreenTimeAccess by mutableStateOf(false)
 
     private val snackbar = SnackbarHostState()
 
@@ -48,6 +51,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         credentials = CredentialStore(this)
+        screenTime = ScreenTimeReader(this)
+        hasScreenTimeAccess = screenTime.hasAccess()
 
         try {
             health = HealthRepository(this)
@@ -74,6 +79,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Der Zugriff wird nur ueber die Systemeinstellungen erteilt, die App bekommt also
+        // keinen Callback dafuer. Ein Wechsel auf erlaubt heisst: gerade von dort zurueck.
+        val hatteZugriff = hasScreenTimeAccess
+        hasScreenTimeAccess = screenTime.hasAccess()
+        if (hasScreenTimeAccess && !hatteZugriff) loadHealthData()
+    }
+
     /**
      * Nur lesen, nicht schreiben. Das Oeffnen der App und das Umstellen des Datums fassen
      * die Tagesnotiz bewusst nicht an, geschrieben wird auf Knopfdruck.
@@ -83,7 +97,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             isSyncing = true
             try {
-                healthReport = repo.read(selectedDate)
+                healthReport = readReport(repo)
             } catch (e: Exception) {
                 Log.e(TAG, "Lesen fehlgeschlagen: ${e.message}")
                 snackbar.showSnackbar("Samsung Health lieferte nichts: ${e.message}")
@@ -91,6 +105,12 @@ class MainActivity : ComponentActivity() {
                 isSyncing = false
             }
         }
+    }
+
+    /** Samsung Health und die Bildschirmzeit kommen aus getrennten Quellen, siehe [HealthReport]. */
+    private suspend fun readReport(repo: HealthRepository): HealthReport {
+        val hours = withContext(Dispatchers.Default) { screenTime.readHours(selectedDate) }
+        return repo.read(selectedDate).copy(screenTime = hours)
     }
 
     private fun startSync() {
@@ -109,7 +129,7 @@ class MainActivity : ComponentActivity() {
                     return@launch
                 }
 
-                healthReport = repo.read(selectedDate)
+                healthReport = readReport(repo)
                 val outcome = withContext(Dispatchers.IO) {
                     val client = WebDavClient(access.baseUrl, access.username, access.password)
                     DailyNoteSync(client, access.dailyNotes).sync(selectedDate, healthReport)
@@ -194,6 +214,13 @@ class MainActivity : ComponentActivity() {
                 Messwert("Zucker", "${zahl(healthReport.sugar, 1)} g")
                 Messwert("Fett", "${zahl(healthReport.fat, 1)} g")
                 Messwert("Ballaststoffe", "${zahl(healthReport.fiber, 1)} g")
+                if (hasScreenTimeAccess) {
+                    Messwert("Bildschirmzeit", "${zahl(healthReport.screenTime, 1)} h")
+                } else {
+                    TextButton(onClick = { startActivity(screenTime.requestAccessIntent()) }) {
+                        Text("Bildschirmzeit-Zugriff erlauben")
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(32.dp))
 

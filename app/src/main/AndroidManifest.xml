@@ -8,6 +8,12 @@
 
     <uses-permission android:name="com.samsung.android.providers.context.permission.WRITE_USE_APP_FEATURE_SURVEY" />
     <uses-permission android:name="com.samsung.health.permission.read" />
+
+    <!-- Fuer die Bildschirmzeit ueber UsageStatsManager. Kein Laufzeit-Dialog, der Zugriff
+         wird von Hand in den Systemeinstellungen erteilt (siehe ScreenTimeReader). -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

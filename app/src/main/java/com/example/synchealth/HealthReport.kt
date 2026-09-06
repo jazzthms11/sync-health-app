@@ -13,4 +13,6 @@ data class HealthReport(
     val fat: Double = 0.0,
     val fiber: Double = 0.0,
     val sugar: Double = 0.0,
+    /** Stunden, aus Androids UsageStatsManager statt aus Samsung Health. */
+    val screenTime: Double = 0.0,
 )

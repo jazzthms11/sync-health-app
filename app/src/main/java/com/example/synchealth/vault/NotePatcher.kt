@@ -30,14 +30,17 @@ object NotePatcher {
     }
 
     /**
-     * Die acht Schluessel aus dem Template Daily. Gewicht, Screen Time, Seiten gelesen und
-     * Podcast gehoert stehen bewusst nicht dabei, die kommen nicht aus Samsung Health.
+     * Die neun Schluessel, die die App befuellt. Acht kommen aus Samsung Health, die
+     * Bildschirmzeit aus Androids UsageStatsManager, siehe
+     * [com.example.synchealth.health.ScreenTimeReader]. Gewicht, Seiten gelesen und
+     * Podcast gehoert stehen bewusst nicht dabei, die liefert keine der beiden Quellen.
      *
      * Null heisst: fuer den Tag liegt nichts vor, die Zeile bleibt unberuehrt.
      */
     private fun values(report: HealthReport): Map<String, String?> = linkedMapOf(
         "Schlaf" to decimal(report.sleep),
         "Schritte" to whole(report.steps),
+        "Screen Time" to decimal(report.screenTime),
         "Kalorien" to whole(report.calories),
         "Protein" to decimal(report.protein),
         "Ballaststoffe" to decimal(report.fiber),

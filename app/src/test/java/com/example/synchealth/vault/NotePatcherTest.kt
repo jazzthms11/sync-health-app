@@ -57,14 +57,15 @@ class NotePatcherTest {
         fat = 71.06,
         fiber = 28.9,
         sugar = 44.55,
+        screenTime = 3.5,
     )
 
     @Test
-    fun `alle acht Schluessel werden ersetzt`() {
+    fun `alle neun Schluessel werden ersetzt`() {
         val result = NotePatcher.patch(template, report)
 
         assertEquals(emptyList<String>(), result.missing)
-        assertEquals(8, result.patched.size)
+        assertEquals(9, result.patched.size)
         assertTrue(result.content.contains("- Schritte:: 8342"))
         assertTrue(result.content.contains("- Kalorien:: 2145"))
         assertTrue(result.content.contains("- Schlaf:: 7.3"))
@@ -72,6 +73,7 @@ class NotePatcherTest {
         assertTrue(result.content.contains("- Ballaststoffe:: 28.9"))
         assertTrue(result.content.contains("- Fett:: 71.1"))
         assertTrue(result.content.contains("- Zucker:: 44.6"))
+        assertTrue(result.content.contains("- Screen Time:: 3.5"))
     }
 
     @Test
@@ -85,7 +87,6 @@ class NotePatcherTest {
         val result = NotePatcher.patch(template, report)
 
         assertTrue(result.content.contains("- Gewicht:: \n"))
-        assertTrue(result.content.contains("- Screen Time:: \n"))
         assertTrue(result.content.contains("- Seiten gelesen:: \n"))
         assertTrue(result.content.contains("- Fokus:: \n"))
     }
@@ -127,7 +128,7 @@ class NotePatcherTest {
 
         assertEquals(listOf("Schlaf"), result.missing)
         assertEquals(emptyList<String>(), result.skipped)
-        assertEquals(7, result.patched.size)
+        assertEquals(8, result.patched.size)
     }
 
     @Test
@@ -158,7 +159,7 @@ class NotePatcherTest {
 
         assertEquals(template, result.content)
         assertTrue(result.unchanged)
-        assertEquals(8, result.skipped.size)
+        assertEquals(9, result.skipped.size)
         assertEquals(emptyList<String>(), result.missing)
     }
 
