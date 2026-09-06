@@ -248,6 +248,9 @@ private fun SettingsDialog(
         mutableStateOf(initial?.dailyNotes ?: DailyNoteSync.DEFAULT_DAILY_NOTES)
     }
     var fehler by remember { mutableStateOf<String?>(null) }
+    var testStatus by remember { mutableStateOf<String?>(null) }
+    var testing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -256,27 +259,27 @@ private fun SettingsDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = url,
-                    onValueChange = { url = it; fehler = null },
+                    onValueChange = { url = it; fehler = null; testStatus = null },
                     label = { Text("Basis-URL") },
                     placeholder = { Text("https://cloud.example.de/remote.php/dav/files/du/vault/") },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = user,
-                    onValueChange = { user = it; fehler = null },
+                    onValueChange = { user = it; fehler = null; testStatus = null },
                     label = { Text("Benutzername") },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = password,
-                    onValueChange = { password = it; fehler = null },
+                    onValueChange = { password = it; fehler = null; testStatus = null },
                     label = { Text("App-Passwort") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                 )
                 OutlinedTextField(
                     value = folder,
-                    onValueChange = { folder = it; fehler = null },
+                    onValueChange = { folder = it; fehler = null; testStatus = null },
                     label = { Text("Ordner der Tagesnotizen") },
                     placeholder = { Text(DailyNoteSync.DEFAULT_DAILY_NOTES) },
                     supportingText = { Text("Leer lassen, wenn sie direkt im Vault-Root liegen.") },
@@ -285,6 +288,27 @@ private fun SettingsDialog(
                 fehler?.let {
                     Text(text = it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                 }
+                OutlinedButton(
+                    onClick = {
+                        val problem = CredentialStore.validateBaseUrl(url)
+                        if (problem != null) {
+                            fehler = problem
+                            return@OutlinedButton
+                        }
+                        testing = true
+                        testStatus = null
+                        scope.launch {
+                            val ergebnis = withContext(Dispatchers.IO) {
+                                WebDavClient(url.trim(), user.trim(), password)
+                                    .probe(folder.trim().trim('/'))
+                            }
+                            testStatus = describeProbe(ergebnis)
+                            testing = false
+                        }
+                    },
+                    enabled = !testing,
+                ) { Text(if (testing) "Prüfe..." else "Verbindung testen") }
+                testStatus?.let { Text(text = it, fontSize = 13.sp) }
             }
         },
         confirmButton = {
@@ -302,4 +326,13 @@ private fun SettingsDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
     )
+}
+
+private fun describeProbe(result: WebDavClient.ProbeResult): String = when (result) {
+    WebDavClient.ProbeResult.Ok -> "Verbindung ok."
+    WebDavClient.ProbeResult.NotFound -> "Ordner gibt es nicht."
+    WebDavClient.ProbeResult.Unauthorized -> "Anmeldung abgelehnt."
+    is WebDavClient.ProbeResult.Failed ->
+        if (result.code == WebDavClient.NO_RESPONSE) "Keine Verbindung: ${result.detail}"
+        else "Server meldet ${result.code}: ${result.detail}"
 }

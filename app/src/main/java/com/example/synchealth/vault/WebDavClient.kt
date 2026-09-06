@@ -48,6 +48,13 @@ class WebDavClient(
         data class Failed(val code: Int, val detail: String) : PutResult
     }
 
+    sealed interface ProbeResult {
+        data object Ok : ProbeResult
+        data object NotFound : ProbeResult
+        data object Unauthorized : ProbeResult
+        data class Failed(val code: Int, val detail: String) : ProbeResult
+    }
+
     /** [path] ist relativ zur Basis, unkodiert, z.B. "05 Daily Notes/2026-08-18.md". */
     fun get(path: String): GetResult {
         val target = url(path)
@@ -113,6 +120,35 @@ class WebDavClient(
         } catch (e: IOException) {
             Log.e(TAG, "PUT $target fehlgeschlagen: ${e.message}")
             PutResult.Failed(NO_RESPONSE, e.message ?: "keine Verbindung")
+        }
+    }
+
+    /**
+     * `PROPFIND` mit `Depth: 0` gegen [path]: prueft, ob der Ordner existiert und die
+     * Zugangsdaten gelten, ohne dessen Inhalt aufzulisten. Fuer den Knopf *Verbindung
+     * testen* im Einstellungsdialog, nicht Teil des Sync-Ablaufs.
+     */
+    fun probe(path: String): ProbeResult {
+        val target = url(path)
+        val request = Request.Builder()
+            .url(target)
+            .header("Authorization", auth)
+            .header("Depth", "0")
+            .method("PROPFIND", ByteArray(0).toRequestBody(null))
+            .build()
+        return try {
+            http.newCall(request).execute().use { response ->
+                Log.d(TAG, "PROPFIND $target -> ${response.code}")
+                when {
+                    response.code == 207 -> ProbeResult.Ok
+                    response.code == 404 -> ProbeResult.NotFound
+                    response.code == 401 -> ProbeResult.Unauthorized
+                    else -> ProbeResult.Failed(response.code, response.message)
+                }
+            }
+        } catch (e: IOException) {
+            Log.e(TAG, "PROPFIND $target fehlgeschlagen: ${e.message}")
+            ProbeResult.Failed(NO_RESPONSE, e.message ?: "keine Verbindung")
         }
     }
 
