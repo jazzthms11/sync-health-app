@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Der Vordergrund misst 66dp auf der 108dp-Leinwand und fuellt die
+    Sicherheitszone damit randlos aus. Der Launcher zeigt nur die inneren
+    72dp, also stiess das Motiv an die Maske. Der Inset schrumpft es auf
+    rund 46dp, damit der Hintergrund sichtbar bleibt.
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@mipmap/ic_launcher_foreground"
+    android:inset="15%" />
