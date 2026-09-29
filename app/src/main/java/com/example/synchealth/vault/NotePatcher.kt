@@ -17,7 +17,7 @@ object NotePatcher {
      * Ergebnis eines Durchlaufs.
      *
      * [missing] nennt Schluessel, deren Zeile in der Notiz fehlt, [skipped] solche,
-     * fuer die Samsung Health nichts geliefert hat.
+     * fuer die keine Quelle etwas geliefert hat.
      */
     data class Result(
         val content: String,
@@ -30,12 +30,14 @@ object NotePatcher {
     }
 
     /**
-     * Die neun Schluessel, die die App befuellt. Acht kommen aus Samsung Health, die
-     * Bildschirmzeit aus Androids UsageStatsManager, siehe
-     * [com.example.synchealth.health.ScreenTimeReader]. Gewicht, Seiten gelesen und
-     * Podcast gehoert stehen bewusst nicht dabei, die liefert keine der beiden Quellen.
+     * Die neun Schluessel, die die App befuellt. Schritte, Schlaf und Wasser kommen aus
+     * Samsung Health, die Bildschirmzeit aus Androids UsageStatsManager, und die fuenf
+     * Naehrwerte aus Samsung Health und Tandoor zusammen, siehe
+     * [com.example.synchealth.DailyTotals]. Gewicht, Seiten gelesen und Podcast gehoert
+     * stehen bewusst nicht dabei, die liefert keine der Quellen.
      *
-     * Null heisst: fuer den Tag liegt nichts vor, die Zeile bleibt unberuehrt.
+     * `null` heisst: fuer den Tag liegt nichts vor, die Zeile bleibt unberuehrt. Eine
+     * `0.0` ist dagegen ein Wert und wird geschrieben.
      */
     private fun values(report: HealthReport): Map<String, String?> = linkedMapOf(
         "Schlaf" to decimal(report.sleep),
@@ -47,23 +49,16 @@ object NotePatcher {
         "Fett" to decimal(report.fat),
         "Zucker" to decimal(report.sugar),
         // Samsung liefert Milliliter, in der Notiz stehen Liter.
-        "Wasser" to decimal(report.water / 1000.0),
+        "Wasser" to decimal(report.water?.div(1000.0)),
     )
 
     /** Immer Punkt als Dezimaltrenner. Dataview liest ein Komma nicht als Zahl. */
-    private fun decimal(value: Double): String? = String.format(Locale.US, "%.1f", value).orNull()
+    private fun decimal(value: Double?): String? =
+        value?.let { String.format(Locale.US, "%.1f", it) }
 
-    private fun whole(value: Long): String? = value.toString().orNull()
+    private fun whole(value: Long?): String? = value?.toString()
 
-    private fun whole(value: Double): String? = value.toInt().toString().orNull()
-
-    /**
-     * Eine Null aus Samsung Health heisst praktisch immer "noch keine Daten" und nicht
-     * "gemessen und es war nichts". Geschrieben wuerde daraus eine echte 0, und die zaehlt
-     * Dataview in den Wochen-Rollups mit, waehrend eine leere Zeile herausfaellt. Deshalb
-     * bleibt die Zeile stehen, bis ein spaeterer Sync einen Wert bringt.
-     */
-    private fun String.orNull(): String? = if (this == "0" || this == "0.0") null else this
+    private fun whole(value: Double?): String? = value?.toInt()?.toString()
 
     fun patch(content: String, report: HealthReport): Result {
         var result = content

@@ -22,8 +22,30 @@ data class VaultAccess(
 )
 
 /**
+ * Was die App braucht, um an den Wochenplan zu kommen.
+ *
+ * [marker] ist die eigene Marke, wie sie in der `note` eines Planeintrags steht, also mit
+ * `@`. Jede Installation holt ihre eigene, deshalb wandern auch keine Zugangsdaten ins
+ * fremde Haus.
+ *
+ * [eaters] ist die Zahl der Esser im Haushalt. Sie zaehlt nur fuer Eintraege ohne Marke,
+ * also fuer die gemeinsamen Abendessen; wo Marken stehen, geben die den Teiler vor.
+ */
+data class TandoorAccess(
+    val baseUrl: String,
+    val token: String,
+    val marker: String,
+    val eaters: Int = DEFAULT_EATERS,
+)
+
+/** Zwei, denn der Haushalt sind Leo und Jazz. Ein Feld im Dialog ueberschreibt es. */
+const val DEFAULT_EATERS = 2
+
+/**
  * Bewahrt den Vault-Zugang auf. Basis-URL und Benutzername stehen im Klartext, das
  * App-Passwort verschluesselt mit einem AES/GCM-Schluessel aus dem Android Keystore.
+ * Der Tandoor-Token liegt daneben und genauso verschluesselt, die Tandoor-Adresse und die
+ * eigene Marke im Klartext: Beides ist kein Geheimnis.
  *
  * Der Schluessel selbst verlaesst den Keystore nie, ein Auslesen der Preferences-Datei
  * bringt also nur den Chiffretext. Bewusst ohne `androidx.security:security-crypto`:
@@ -54,6 +76,43 @@ class CredentialStore(context: Context) {
             // des Pfads ein leeres Segment.
             .putString(KEY_FOLDER, access.dailyNotes.trim().trim('/'))
             .apply()
+    }
+
+    /**
+     * Der Tandoor-Zugang, oder `null`, solange er nicht eingetragen ist. Dann bleibt es
+     * bei Samsung Health allein.
+     *
+     * Fehlt eines der drei Felder, gilt der ganze Zugang als nicht eingetragen: Eine
+     * Adresse ohne Token nuetzt nichts, und ein Token ohne Marke wuerde jeden Anteil auf
+     * null rechnen und damit stillschweigend nichts beitragen.
+     */
+    fun loadTandoor(): TandoorAccess? {
+        val url = prefs.getString(KEY_TANDOOR_URL, null) ?: return null
+        val secret = prefs.getString(KEY_TANDOOR_TOKEN, null) ?: return null
+        val token = decrypt(secret) ?: return null
+        val marker = prefs.getString(KEY_TANDOOR_MARKER, null) ?: return null
+        // Nicht `?: return null`: Eine Installation von vor diesem Feld kennt den
+        // Schluessel nicht, und der ganze Tandoor-Zugang faellt sonst nach dem Update
+        // weg, obwohl er verschluesselt danebenliegt. Siehe KEY_FOLDER.
+        val eaters = prefs.getInt(KEY_TANDOOR_EATERS, DEFAULT_EATERS)
+        return TandoorAccess(url, token, marker, eaters)
+    }
+
+    /** [access] als `null` loescht den Zugang wieder, etwa wenn die Felder geleert werden. */
+    fun saveTandoor(access: TandoorAccess?) {
+        val editor = prefs.edit()
+        if (access == null) {
+            editor.remove(KEY_TANDOOR_URL)
+                .remove(KEY_TANDOOR_TOKEN)
+                .remove(KEY_TANDOOR_MARKER)
+                .remove(KEY_TANDOOR_EATERS)
+        } else {
+            editor.putString(KEY_TANDOOR_URL, access.baseUrl.trimEnd('/'))
+                .putString(KEY_TANDOOR_TOKEN, encrypt(access.token))
+                .putString(KEY_TANDOOR_MARKER, marker(access.marker))
+                .putInt(KEY_TANDOOR_EATERS, access.eaters)
+        }
+        editor.apply()
     }
 
     private fun encrypt(plain: String): String {
@@ -98,6 +157,10 @@ class CredentialStore(context: Context) {
         private const val KEY_USER = "benutzer"
         private const val KEY_PASSWORD = "app_passwort"
         private const val KEY_FOLDER = "tagesnotizen"
+        private const val KEY_TANDOOR_URL = "tandoor_url"
+        private const val KEY_TANDOOR_TOKEN = "tandoor_token"
+        private const val KEY_TANDOOR_MARKER = "tandoor_marke"
+        private const val KEY_TANDOOR_EATERS = "tandoor_esser"
         private const val KEYSTORE = "AndroidKeyStore"
         private const val ALIAS = "synchealth-vault"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
@@ -112,6 +175,14 @@ class CredentialStore(context: Context) {
          * gegen einen lokalen Testserver pruefbar. Ueber http ginge das App-Passwort
          * lesbar auf die Leitung, Basic Auth ist nur Base64 und keine Verschluesselung.
          */
+        /**
+         * Die Marke so, wie sie in der `note` steht: klein und mit genau einem `@` davor.
+         * Ohne diese Normalisierung haengt der Abgleich daran, ob beim Eintippen ein `@`
+         * mitgetippt wurde, und ein fehlendes waere still: Es rechnet jeden Anteil auf
+         * null statt einen Fehler zu melden.
+         */
+        fun marker(input: String): String = "@" + input.trim().trimStart('@').lowercase()
+
         fun validateBaseUrl(input: String): String? = when {
             input.isBlank() -> "Die Basis-URL fehlt."
             !input.startsWith("https://", ignoreCase = true) ->

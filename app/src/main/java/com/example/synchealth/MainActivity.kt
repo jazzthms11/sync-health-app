@@ -13,14 +13,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.example.synchealth.health.HealthRepository
 import com.example.synchealth.health.ScreenTimeReader
 import com.example.synchealth.settings.CredentialStore
-import com.example.synchealth.settings.VaultAccess
+import com.example.synchealth.settings.SettingsDialog
+import com.example.synchealth.tandoor.TandoorClient
+import com.example.synchealth.tandoor.TandoorSource
 import com.example.synchealth.ui.theme.SyncHealthTheme
 import com.example.synchealth.vault.DailyNoteSync
 import com.example.synchealth.vault.WebDavClient
@@ -40,6 +41,9 @@ class MainActivity : ComponentActivity() {
 
     private var selectedDate by mutableStateOf(LocalDate.now())
     private var healthReport by mutableStateOf(HealthReport())
+
+    /** Was an den Werten auffiel, etwa ein Planeintrag ohne Marke oder ein stummes Tandoor. */
+    private var hinweise by mutableStateOf<List<String>>(emptyList())
     private var isSyncing by mutableStateOf(false)
     private var showSettings by mutableStateOf(false)
     private var hasScreenTimeAccess by mutableStateOf(false)
@@ -97,7 +101,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             isSyncing = true
             try {
-                healthReport = readReport(repo)
+                show(readDay(repo))
             } catch (e: Exception) {
                 Log.e(TAG, "Lesen fehlgeschlagen: ${e.message}")
                 snackbar.showSnackbar("Samsung Health lieferte nichts: ${e.message}")
@@ -107,10 +111,31 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Samsung Health und die Bildschirmzeit kommen aus getrennten Quellen, siehe [HealthReport]. */
-    private suspend fun readReport(repo: HealthRepository): HealthReport {
+    private fun show(day: DailyTotals.Merged) {
+        healthReport = day.report
+        hinweise = day.notes
+    }
+
+    /**
+     * Liest den Tag aus allen Quellen und fuehrt sie zusammen.
+     *
+     * Tandoor wird auch beim blossen Anschauen abgefragt, nicht erst beim Sync: Die App
+     * soll anzeigen, was sie schreiben wuerde. Stuende hier eine andere Zahl als spaeter
+     * in der Notiz, waere genau der blinde Fleck zurueck, der die Drive-Fassung monatelang
+     * Erfolg melden liess.
+     */
+    private suspend fun readDay(repo: HealthRepository): DailyTotals.Merged {
+        // Ohne erteilten Zugriff und an einem Tag ohne Ereignisse kommen 0.0 Stunden
+        // zurueck, und das heisst hier wie bei Samsung Health "noch keine Daten".
         val hours = withContext(Dispatchers.Default) { screenTime.readHours(selectedDate) }
-        return repo.read(selectedDate).copy(screenTime = hours)
+        val samsung = repo.read(selectedDate).copy(screenTime = hours.takeIf { it > 0.0 })
+        val meals = withContext(Dispatchers.IO) {
+            credentials.loadTandoor()?.let {
+                TandoorSource(TandoorClient(it.baseUrl, it.token), it.marker, it.eaters)
+                    .read(selectedDate)
+            }
+        }
+        return DailyTotals.merge(samsung, meals)
     }
 
     private fun startSync() {
@@ -129,13 +154,14 @@ class MainActivity : ComponentActivity() {
                     return@launch
                 }
 
-                healthReport = readReport(repo)
+                val day = readDay(repo)
+                show(day)
                 val outcome = withContext(Dispatchers.IO) {
                     val client = WebDavClient(access.baseUrl, access.username, access.password)
-                    DailyNoteSync(client, access.dailyNotes).sync(selectedDate, healthReport)
+                    DailyNoteSync(client, access.dailyNotes).sync(selectedDate, day.report)
                 }
-                Log.d(TAG, "Sync $selectedDate: $outcome")
-                snackbar.showSnackbar(describe(outcome))
+                Log.d(TAG, "Sync $selectedDate: $outcome, Hinweise ${day.notes}")
+                snackbar.showSnackbar(describe(outcome, day.notes))
             } catch (e: Exception) {
                 Log.e(TAG, "Sync fehlgeschlagen", e)
                 snackbar.showSnackbar("Sync fehlgeschlagen: ${e.message}")
@@ -149,24 +175,29 @@ class MainActivity : ComponentActivity() {
      * Jeder Ausgang bekommt einen eigenen Satz. Die alte Fassung meldete in jedem Fall
      * "Sync abgeschlossen", auch wenn sie in eine tote Kopie schrieb, und genau deshalb ist
      * der Ausfall im August wochenlang nicht aufgefallen.
+     *
+     * [notes] haengt hinten an, statt eine eigene Meldung zu bekommen: Ein ausgefallenes
+     * Tandoor ist kein gescheiterter Sync, die uebrigen Werte stehen danach richtig da.
      */
-    private fun describe(outcome: DailyNoteSync.Outcome): String = when (outcome) {
-        is DailyNoteSync.Outcome.Written -> buildString {
-            append("${outcome.patched.size} Werte in $selectedDate geschrieben")
-            if (outcome.skipped.isNotEmpty()) append(", ${outcome.skipped.size} ohne Daten")
-            if (outcome.missing.isNotEmpty()) {
-                append(". Zeile fehlt: ${outcome.missing.joinToString()}")
+    private fun describe(outcome: DailyNoteSync.Outcome, notes: List<String>): String {
+        val satz = when (outcome) {
+            is DailyNoteSync.Outcome.Written -> buildString {
+                append("${outcome.patched.size} Werte in $selectedDate geschrieben")
+                if (outcome.skipped.isNotEmpty()) append(", ${outcome.skipped.size} ohne Daten")
+                if (outcome.missing.isNotEmpty()) {
+                    append(". Zeile fehlt: ${outcome.missing.joinToString()}")
+                }
             }
+            is DailyNoteSync.Outcome.NothingToDo -> "$selectedDate stand schon richtig da."
+            is DailyNoteSync.Outcome.NoteMissing -> "Tagesnotiz $selectedDate gibt es nicht."
+            DailyNoteSync.Outcome.Unauthorized -> "Anmeldung abgelehnt. App-Passwort prüfen."
+            DailyNoteSync.Outcome.Conflict ->
+                "$selectedDate wurde zweimal parallel geändert. Nochmal versuchen."
+            is DailyNoteSync.Outcome.Failed ->
+                if (outcome.code == WebDavClient.NO_RESPONSE) "Keine Verbindung: ${outcome.detail}"
+                else "Server meldet ${outcome.code}: ${outcome.detail}"
         }
-        is DailyNoteSync.Outcome.NothingToDo -> "$selectedDate stand schon richtig da."
-        is DailyNoteSync.Outcome.NoteMissing ->
-            "Tagesnotiz $selectedDate gibt es nicht."
-        DailyNoteSync.Outcome.Unauthorized -> "Anmeldung abgelehnt. App-Passwort prüfen."
-        DailyNoteSync.Outcome.Conflict ->
-            "$selectedDate wurde zweimal parallel geändert. Nochmal versuchen."
-        is DailyNoteSync.Outcome.Failed ->
-            if (outcome.code == WebDavClient.NO_RESPONSE) "Keine Verbindung: ${outcome.detail}"
-            else "Server meldet ${outcome.code}: ${outcome.detail}"
+        return if (notes.isEmpty()) satz else "$satz — ${notes.joinToString("; ")}"
     }
 
     private fun showDatePicker() {
@@ -206,19 +237,30 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Messwert("Schritte", healthReport.steps.toString())
-                Messwert("Kalorien", "${zahl(healthReport.calories, 0)} kcal")
-                Messwert("Wasser", "${zahl(healthReport.water / 1000.0, 2)} l")
-                Messwert("Schlaf", "${zahl(healthReport.sleep, 2)} h")
-                Messwert("Protein", "${zahl(healthReport.protein, 1)} g")
-                Messwert("Zucker", "${zahl(healthReport.sugar, 1)} g")
-                Messwert("Fett", "${zahl(healthReport.fat, 1)} g")
-                Messwert("Ballaststoffe", "${zahl(healthReport.fiber, 1)} g")
+                Messwert("Schritte", healthReport.steps?.toString())
+                Messwert("Kalorien", zahl(healthReport.calories, 0), "kcal")
+                Messwert("Wasser", zahl(healthReport.water?.div(1000.0), 2), "l")
+                Messwert("Schlaf", zahl(healthReport.sleep, 2), "h")
+                Messwert("Protein", zahl(healthReport.protein, 1), "g")
+                Messwert("Zucker", zahl(healthReport.sugar, 1), "g")
+                Messwert("Fett", zahl(healthReport.fat, 1), "g")
+                Messwert("Ballaststoffe", zahl(healthReport.fiber, 1), "g")
                 if (hasScreenTimeAccess) {
-                    Messwert("Bildschirmzeit", "${zahl(healthReport.screenTime, 1)} h")
+                    Messwert("Bildschirmzeit", zahl(healthReport.screenTime, 1), "h")
                 } else {
                     TextButton(onClick = { startActivity(screenTime.requestAccessIntent()) }) {
                         Text("Bildschirmzeit-Zugriff erlauben")
+                    }
+                }
+
+                if (hinweise.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    hinweise.forEach {
+                        Text(
+                            text = it,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
 
@@ -229,7 +271,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 TextButton(onClick = { showSettings = true }, enabled = !isSyncing) {
-                    Text("Vault-Zugang")
+                    Text("Zugänge")
                 }
             }
 
@@ -243,123 +285,28 @@ class MainActivity : ComponentActivity() {
 
         if (showSettings) {
             SettingsDialog(
-                initial = credentials.load(),
+                vault = credentials.load(),
+                tandoor = credentials.loadTandoor(),
                 onDismiss = { showSettings = false },
-                onSave = { access ->
+                onSave = { access, plan ->
                     credentials.save(access)
+                    credentials.saveTandoor(plan)
                     showSettings = false
+                    loadHealthData()
                 },
             )
         }
     }
 
     @Composable
-    private fun Messwert(name: String, wert: String) {
-        Text(text = "$name: $wert", fontSize = 22.sp)
+    private fun Messwert(name: String, wert: String?, einheit: String = "") {
+        // Ein Strich statt einer Null: Fuer den Tag liegt nichts vor, und eine 0 waere
+        // dafuer die falsche Anzeige, seit eine echte 0 geschrieben werden kann.
+        val text = if (wert == null) "—" else listOf(wert, einheit).filter { it.isNotEmpty() }
+            .joinToString(" ")
+        Text(text = "$name: $text", fontSize = 22.sp)
     }
 
-    private fun zahl(value: Double, stellen: Int): String =
-        String.format(Locale.US, "%.${stellen}f", value)
-}
-
-@Composable
-private fun SettingsDialog(
-    initial: VaultAccess?,
-    onDismiss: () -> Unit,
-    onSave: (VaultAccess) -> Unit,
-) {
-    var url by remember { mutableStateOf(initial?.baseUrl ?: "https://") }
-    var user by remember { mutableStateOf(initial?.username.orEmpty()) }
-    var password by remember { mutableStateOf(initial?.password.orEmpty()) }
-    var folder by remember {
-        mutableStateOf(initial?.dailyNotes ?: DailyNoteSync.DEFAULT_DAILY_NOTES)
-    }
-    var fehler by remember { mutableStateOf<String?>(null) }
-    var testStatus by remember { mutableStateOf<String?>(null) }
-    var testing by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Vault-Zugang") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it; fehler = null; testStatus = null },
-                    label = { Text("Basis-URL") },
-                    placeholder = { Text("https://cloud.example.de/remote.php/dav/files/du/vault/") },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = user,
-                    onValueChange = { user = it; fehler = null; testStatus = null },
-                    label = { Text("Benutzername") },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it; fehler = null; testStatus = null },
-                    label = { Text("App-Passwort") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-                OutlinedTextField(
-                    value = folder,
-                    onValueChange = { folder = it; fehler = null; testStatus = null },
-                    label = { Text("Ordner der Tagesnotizen") },
-                    placeholder = { Text(DailyNoteSync.DEFAULT_DAILY_NOTES) },
-                    supportingText = { Text("Leer lassen, wenn sie direkt im Vault-Root liegen.") },
-                    singleLine = true,
-                )
-                fehler?.let {
-                    Text(text = it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
-                }
-                OutlinedButton(
-                    onClick = {
-                        val problem = CredentialStore.validateBaseUrl(url)
-                        if (problem != null) {
-                            fehler = problem
-                            return@OutlinedButton
-                        }
-                        testing = true
-                        testStatus = null
-                        scope.launch {
-                            val ergebnis = withContext(Dispatchers.IO) {
-                                WebDavClient(url.trim(), user.trim(), password)
-                                    .probe(folder.trim().trim('/'))
-                            }
-                            testStatus = describeProbe(ergebnis)
-                            testing = false
-                        }
-                    },
-                    enabled = !testing,
-                ) { Text(if (testing) "Prüfe..." else "Verbindung testen") }
-                testStatus?.let { Text(text = it, fontSize = 13.sp) }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val problem = CredentialStore.validateBaseUrl(url)
-                    ?: when {
-                        user.isBlank() -> "Der Benutzername fehlt."
-                        password.isBlank() -> "Das App-Passwort fehlt."
-                        else -> null
-                    }
-                if (problem != null) fehler = problem
-                // Der Ordner wird bewusst nicht geprueft, leer ist ein gueltiger Wert.
-                else onSave(VaultAccess(url.trim(), user.trim(), password, folder.trim()))
-            }) { Text("Speichern") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
-    )
-}
-
-private fun describeProbe(result: WebDavClient.ProbeResult): String = when (result) {
-    WebDavClient.ProbeResult.Ok -> "Verbindung ok."
-    WebDavClient.ProbeResult.NotFound -> "Ordner gibt es nicht."
-    WebDavClient.ProbeResult.Unauthorized -> "Anmeldung abgelehnt."
-    is WebDavClient.ProbeResult.Failed ->
-        if (result.code == WebDavClient.NO_RESPONSE) "Keine Verbindung: ${result.detail}"
-        else "Server meldet ${result.code}: ${result.detail}"
+    private fun zahl(value: Double?, stellen: Int): String? =
+        value?.let { String.format(Locale.US, "%.${stellen}f", it) }
 }

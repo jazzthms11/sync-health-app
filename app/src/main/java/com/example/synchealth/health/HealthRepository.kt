@@ -18,7 +18,9 @@ import kotlin.coroutines.resumeWithException
 
 /**
  * Alles, was mit Samsung Health zu tun hat. Liest einen Tag und gibt ihn als [HealthReport]
- * heraus; was danach damit passiert, weiss diese Klasse nicht.
+ * heraus; was danach damit passiert, weiss diese Klasse nicht. Die fuenf Naehrwerte darin
+ * sind nur der eigene Beitrag, den Rest steuert Tandoor bei, siehe
+ * [com.example.synchealth.DailyTotals].
  *
  * Der Konstruktor greift auf Samsung Health zu und wirft, wenn es fehlt. Das gehoert
  * abgefangen, damit die App auch auf einem Geraet ohne Samsung Health startet.
@@ -72,19 +74,33 @@ class HealthRepository(private val context: Context) {
         }
 
         val sleepIso = sleepResult.dataList.firstOrNull()?.value as? Duration ?: Duration.ZERO
-        val sleepHours = if (sleepIso != Duration.ZERO) sleepIso.toSeconds().toDouble() / 3600.0 else 0.0
+        val sleepHours = sleepIso.toSeconds().toDouble() / 3600.0
 
         return HealthReport(
-            steps = stepResult.dataList.firstOrNull()?.value as? Long ?: 0L,
-            calories = (calResult.dataList.firstOrNull()?.value as? Number)?.toDouble() ?: 0.0,
-            water = (waterResult.dataList.firstOrNull()?.value as? Number)?.toDouble() ?: 0.0,
-            sleep = sleepHours,
-            protein = protein,
-            fat = fat,
-            fiber = fiber,
-            sugar = sugar,
+            steps = (stepResult.dataList.firstOrNull()?.value as? Long).orNull(),
+            calories = (calResult.dataList.firstOrNull()?.value as? Number)?.toDouble().orNull(),
+            water = (waterResult.dataList.firstOrNull()?.value as? Number)?.toDouble().orNull(),
+            sleep = sleepHours.orNull(),
+            protein = protein.orNull(),
+            fat = fat.orNull(),
+            fiber = fiber.orNull(),
+            sugar = sugar.orNull(),
         )
     }
+
+    /**
+     * Eine Null aus Samsung Health heisst praktisch immer "noch keine Daten" und nicht
+     * "gemessen und es war nichts".
+     *
+     * Die Regel stand frueher im [com.example.synchealth.vault.NotePatcher] und sitzt
+     * jetzt hier, weil sie nur fuer diese Quelle gilt. Seit Tandoor die Naehrwerte von
+     * Mittag und Abend beisteuert, ist eine fehlende Samsung-Zahl naemlich nicht mehr
+     * dasselbe wie keine Zahl: Sie heisst nur, dass zu diesem Tag nichts eingetragen
+     * wurde, und die Summe kann trotzdem stehen.
+     */
+    private fun Double?.orNull(): Double? = if (this == null || this == 0.0) null else this
+
+    private fun Long?.orNull(): Long? = if (this == null || this == 0L) null else this
 
     /** Macht aus den Samsung-Callbacks eine Coroutine. */
     private suspend fun <T> AsyncSingleFuture<T>.await(): T = suspendCancellableCoroutine { cont ->

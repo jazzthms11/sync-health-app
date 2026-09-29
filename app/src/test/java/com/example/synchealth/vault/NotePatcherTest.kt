@@ -154,7 +154,7 @@ class NotePatcherTest {
     }
 
     @Test
-    fun `eine Null laesst die Zeile unangetastet`() {
+    fun `ohne Wert bleibt die Zeile unangetastet`() {
         val result = NotePatcher.patch(template, HealthReport())
 
         assertEquals(template, result.content)
@@ -164,9 +164,9 @@ class NotePatcherTest {
     }
 
     @Test
-    fun `eine Null ueberschreibt keinen bestehenden Wert`() {
+    fun `ein fehlender Wert ueberschreibt keinen bestehenden`() {
         val getippt = template.replace("- Kalorien:: ", "- Kalorien:: 2100")
-        val result = NotePatcher.patch(getippt, report.copy(calories = 0.0))
+        val result = NotePatcher.patch(getippt, report.copy(calories = null))
 
         assertTrue(
             "Der von Hand eingetragene Wert muss stehen bleiben",
@@ -175,13 +175,25 @@ class NotePatcherTest {
         assertTrue(result.skipped.contains("Kalorien"))
     }
 
+    /**
+     * Frueher hat der Patcher jede Null verschluckt, weil eine Null aus Samsung Health
+     * "noch keine Daten" hiess. Diese Regel sitzt seit Tandoor in der
+     * [com.example.synchealth.health.HealthRepository] und gilt nur noch fuer diese eine
+     * Quelle: Was hier ankommt, ist die Summe beider Quellen und wird geschrieben.
+     */
     @Test
-    fun `ein auf Null gerundeter Wert wird nicht geschrieben`() {
+    fun `eine gemessene Null wird geschrieben`() {
+        val result = NotePatcher.patch(template, HealthReport(sugar = 0.0))
+
+        assertTrue(result.content.contains("- Zucker:: 0.0"))
+        assertFalse(result.skipped.contains("Zucker"))
+    }
+
+    @Test
+    fun `ein auf Null gerundeter Wert wird geschrieben`() {
         val result = NotePatcher.patch(template, HealthReport(protein = 0.04, calories = 0.6))
 
-        assertTrue(result.skipped.contains("Protein"))
-        assertTrue(result.skipped.contains("Kalorien"))
-        assertTrue(result.content.contains("- Protein:: \n"))
-        assertTrue(result.content.contains("- Kalorien:: \n"))
+        assertTrue(result.content.contains("- Protein:: 0.0"))
+        assertTrue(result.content.contains("- Kalorien:: 0"))
     }
 }
