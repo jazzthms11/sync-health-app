@@ -21,6 +21,14 @@ data class MealNutrition(
         sugar = sugar + other.sugar,
     )
 
+    operator fun times(factor: Double): MealNutrition = MealNutrition(
+        calories = calories * factor,
+        protein = protein * factor,
+        fat = fat * factor,
+        fiber = fiber * factor,
+        sugar = sugar * factor,
+    )
+
     companion object {
         val NOTHING = MealNutrition()
 

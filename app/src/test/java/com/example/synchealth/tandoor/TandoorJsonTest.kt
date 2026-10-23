@@ -30,33 +30,61 @@ class TandoorJsonTest {
     """.trimIndent()
 
     /**
+     * Gebaut nach der Bowl, wie Tandoor sie am 24.10.2026 geliefert hat: Mengen in g und
+     * in Stueck mit gepflegter Umrechnung, ein Loeffelmass ohne Umrechnung, ein Gewuerz
+     * ohne Menge und ein Lebensmittel, dem Naehrwerte fehlen.
+     *
      * `food_properties` fuehrt die `fdc_id` nicht mit, nur Tandoors eigene Typ-ID, und
      * die steht doppelt: als Schluessel und als `id` in der Zeile. Gelesen wird die `id`.
      */
     private val rezept = """
         {
-          "id": 7,
-          "name": "Bolognese",
+          "id": 13,
+          "name": "Bowl",
           "servings": 4,
-          "food_properties": {
-            "1": {
-              "id": 1,
-              "name": "Kalorien",
-              "unit": "kcal",
-              "order": 0,
-              "food_values": { "12": { "id": 12, "food": { "id": 12, "name": "Hack" }, "value": 900.0 } },
-              "total_value": 2716.4,
-              "missing_value": false
+          "steps": [
+            {
+              "ingredients": [
+                { "is_header": true, "food": null, "amount": 0 },
+                { "food": { "id": 349, "name": "Vollkornreis" }, "unit": { "name": "g", "base_unit": "g" },
+                  "amount": 400.0, "no_amount": false,
+                  "conversions": [ { "food": "Vollkornreis", "unit": "g", "amount": 400.0 },
+                                   { "food": "Vollkornreis", "unit": "kg", "amount": 0.4 } ] },
+                { "food": { "id": 265, "name": "Tomate" }, "unit": { "name": "Stück", "base_unit": null },
+                  "amount": 4.0, "no_amount": false,
+                  "conversions": [ { "food": "Tomate", "unit": "Stück", "amount": 4.0 },
+                                   { "food": "Tomate", "unit": "g", "amount": "400.000" } ] },
+                { "food": { "id": 77, "name": "Senf" }, "unit": { "name": "EL", "base_unit": "tbsp" },
+                  "amount": 2.0, "no_amount": false,
+                  "conversions": [ { "food": "Senf", "unit": "EL", "amount": 2.0 } ] },
+                { "food": { "id": 5, "name": "Salz" }, "unit": { "name": "g", "base_unit": "g" },
+                  "amount": 0.0, "no_amount": false, "conversions": [] }
+              ]
             },
-            "7": {
-              "id": 7,
-              "name": "Ballaststoffe",
-              "unit": "g",
-              "order": 0,
-              "food_values": {},
-              "total_value": 38.2,
-              "missing_value": true
+            {
+              "ingredients": [
+                { "food": { "id": 265, "name": "Tomate" }, "unit": { "name": "g", "base_unit": "g" },
+                  "amount": 100.0, "no_amount": false,
+                  "conversions": [ { "food": "Tomate", "unit": "g", "amount": 100.0 } ] },
+                { "food": { "id": 88, "name": "Parmesan" }, "unit": { "name": "g", "base_unit": "g" },
+                  "amount": 30.0, "no_amount": false,
+                  "conversions": [ { "food": "Parmesan", "unit": "g", "amount": 30.0 } ] }
+              ]
             }
+          ],
+          "food_properties": {
+            "1": { "id": 1, "name": "Kalorien", "total_value": 1524.0, "missing_value": true,
+                   "food_values": {
+                     "349": { "id": 349, "food": { "id": 349, "name": "Vollkornreis" }, "value": 1424.0 },
+                     "265": { "id": 265, "food": { "id": 265, "name": "Tomate" }, "value": 100.0 },
+                     "77":  { "id": 77,  "food": { "id": 77,  "name": "Senf" }, "value": null },
+                     "88":  { "id": 88,  "food": { "id": 88,  "name": "Parmesan" }, "value": null }
+                   } },
+            "2": { "id": 2, "food_values": { "349": { "id": 349, "value": 35.6 }, "265": { "id": 265, "value": 4.5 } } },
+            "3": { "id": 3, "food_values": { "349": { "id": 349, "value": 4.4 },  "265": { "id": 265, "value": 1.0 } } },
+            "7": { "id": 7, "food_values": { "349": { "id": 349, "value": 14.0 }, "265": { "id": 265, "value": 6.0 } } },
+            "6": { "id": 6, "food_values": { "349": { "id": 349, "value": 2.8 },  "265": { "id": 265, "value": 13.0 } } },
+            "9": { "id": 9, "food_values": { "349": { "id": 349, "value": 99.0 } } }
           }
         }
     """.trimIndent()
@@ -74,7 +102,7 @@ class TandoorJsonTest {
         }
     """.trimIndent()
 
-    private val fdcByType = mapOf(1 to 1008, 7 to 1079)
+    private val fdcByType = mapOf(1 to 1008, 2 to 1003, 3 to 1004, 7 to 1079, 6 to 2000)
 
     @Test
     fun `ein Planeintrag kommt vollstaendig durch`() {
@@ -126,66 +154,99 @@ class TandoorJsonTest {
     }
 
     @Test
-    fun `die Naehrwerte kommen mit fdc_id und Vollstaendigkeitsflagge`() {
+    fun `Zutaten kommen je Lebensmittel mit Gramm und Beitrag`() {
         val parsed = TandoorJson.recipe(rezept, fdcByType)
 
         assertEquals(4.0, parsed.servings, 1e-9)
-        val kalorien = parsed.properties.single { it.fdcId == MealNutrition.FDC_CALORIES }
-        assertEquals(2716.4, kalorien.totalValue, 1e-9)
-        assertEquals(false, kalorien.missing)
-        assertEquals(true, parsed.properties.single { it.fdcId == 1079 }.missing)
+        assertEquals(listOf("Vollkornreis", "Tomate", "Senf", "Parmesan"), parsed.foods.map { it.name })
+        val reis = parsed.foods.first()
+        assertEquals(400.0, reis.amount!!, 1e-9)
+        assertEquals(MealNutrition(1424.0, 35.6, 4.4, 14.0, 2.8), reis.nutrition)
+    }
+
+    /** Stueck zaehlt ueber die gepflegte Umrechnung, und zwei Zeilen werden addiert. */
+    @Test
+    fun `ein Lebensmittel in zwei Zeilen wird zusammengefasst`() {
+        val tomate = TandoorJson.recipe(rezept, fdcByType).foods.single { it.name == "Tomate" }
+
+        assertEquals(500.0, tomate.amount!!, 1e-9)
+        assertEquals(100.0, tomate.nutrition!!.calories, 1e-9)
+    }
+
+    /**
+     * Ohne Umrechnung in Gramm bleibt die Einheit aus dem Rezept. So stehen Fladenbrot und
+     * Bolognese-Sosse in Tandoor, mit Naehrwerten je Stueck.
+     */
+    @Test
+    fun `ohne Umrechnung in Gramm gilt die Einheit des Rezepts`() {
+        val senf = TandoorJson.recipe(rezept, fdcByType).foods.single { it.name == "Senf" }
+
+        assertEquals(2.0, senf.amount!!, 1e-9)
+        assertEquals("EL", senf.unit)
+    }
+
+    @Test
+    fun `gemischte Einheiten ohne Gramm lassen die Menge offen`() {
+        val gemischt = """
+            {
+              "id": 1, "name": "Gemischt", "servings": 1,
+              "steps": [ { "ingredients": [
+                { "food": { "id": 1, "name": "Brot" }, "unit": { "name": "Stück" }, "amount": 1, "conversions": [] },
+                { "food": { "id": 1, "name": "Brot" }, "unit": { "name": "Scheiben" }, "amount": 2, "conversions": [] }
+              ] } ],
+              "food_properties": {}
+            }
+        """.trimIndent()
+
+        assertNull(TandoorJson.recipe(gemischt, fdcByType).foods.single().amount)
+    }
+
+    @Test
+    fun `fehlt ein Wert, gibt es keine Naehrwerte fuer das Lebensmittel`() {
+        val parmesan = TandoorJson.recipe(rezept, fdcByType).foods.single { it.name == "Parmesan" }
+
+        assertEquals(30.0, parmesan.amount!!, 1e-9)
+        assertNull(parmesan.nutrition)
+    }
+
+    @Test
+    fun `ein Gewuerz ohne Menge faellt heraus`() {
+        assertTrue(TandoorJson.recipe(rezept, fdcByType).foods.none { it.name == "Salz" })
+    }
+
+    /**
+     * Ein selbst angelegter Typ ohne `fdc_id` laesst sich keinem der fuenf Naehrwerte
+     * zuordnen und darf keinen davon ueberschreiben.
+     */
+    @Test
+    fun `ein Typ ohne fdc_id wird ignoriert`() {
+        val reis = TandoorJson.recipe(rezept, fdcByType).foods.first()
+
+        assertEquals(1424.0, reis.nutrition!!.calories, 1e-9)
+    }
+
+    /** Eine aeltere Tandoor-Version ohne `conversions`: Eine Zeile in g zaehlt trotzdem. */
+    @Test
+    fun `ohne conversions zaehlt eine Zeile in g direkt`() {
+        val alt = """
+            {
+              "id": 1, "name": "Alt", "servings": 1,
+              "steps": [ { "ingredients": [
+                { "food": { "id": 1, "name": "Reis" }, "unit": { "name": "g", "base_unit": "g" }, "amount": 80 }
+              ] } ],
+              "food_properties": {}
+            }
+        """.trimIndent()
+
+        val reis = TandoorJson.recipe(alt, fdcByType).foods.single()
+
+        assertEquals(80.0, reis.amount!!, 1e-9)
+        assertNull(reis.nutrition)
     }
 
     @Test
     fun `die Typtabelle wird zu Typ-ID auf fdc_id`() {
         assertEquals(mapOf(1 to 1008, 7 to 1079), TandoorJson.propertyTypes(naehrwerttypen))
-    }
-
-    /**
-     * Ein selbst angelegter Typ ohne `fdc_id` laesst sich keinem der fuenf Naehrwerte
-     * zuordnen. Er faellt aus der Tabelle, und ein Wert dieses Typs bekommt dann keine
-     * Nummer: [MealPlanMath] laesst ihn liegen, statt ihn zu verwechseln.
-     */
-    @Test
-    fun `ein Typ ohne fdc_id bleibt ohne Nummer`() {
-        val eigener = """
-            {
-              "id": 7,
-              "name": "Bolognese",
-              "servings": 4,
-              "food_properties": {
-                "9": { "id": 9, "name": "Eigene Kennzahl", "total_value": 1.0, "missing_value": false }
-              }
-            }
-        """.trimIndent()
-
-        val parsed = TandoorJson.recipe(eigener, TandoorJson.propertyTypes(naehrwerttypen))
-
-        assertNull(parsed.properties.single().fdcId)
-    }
-
-    /**
-     * Die Typ-ID steht in der Zeile selbst, nicht nur im Schluessel. Deshalb traegt die
-     * Array-Form ohne Zutun, und eine andere Tandoor-Version kostet hier nichts.
-     */
-    @Test
-    fun `food_properties als Liste wird genauso gelesen`() {
-        val alsListe = """
-            {
-              "id": 7,
-              "name": "Bolognese",
-              "servings": 4,
-              "food_properties": [
-                { "id": 1, "name": "Kalorien", "total_value": 2716.4, "missing_value": false },
-                { "id": 7, "name": "Ballaststoffe", "total_value": 38.2, "missing_value": true }
-              ]
-            }
-        """.trimIndent()
-
-        val parsed = TandoorJson.recipe(alsListe, fdcByType)
-
-        assertEquals(2, parsed.properties.size)
-        assertEquals(2716.4, parsed.properties.first { it.fdcId == 1008 }.totalValue, 1e-9)
     }
 
     @Test

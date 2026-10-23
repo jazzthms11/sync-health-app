@@ -1,5 +1,6 @@
 package com.example.synchealth.tandoor
 
+import com.example.synchealth.essen.PlannedMeal
 import java.time.LocalDate
 
 /**
@@ -21,12 +22,12 @@ class TandoorSource(
 ) {
 
     sealed interface Outcome {
-        data class Ready(val nutrition: MealNutrition) : Outcome
+        data class Ready(val meals: List<PlannedMeal>) : Outcome
 
         /**
-         * Keine belastbare Summe. Die fuenf geteilten Felder bleiben dann ungeschrieben,
-         * denn Samsung Health allein waere die halbe Mahlzeit, und eine zu niedrige Zahl
-         * faellt in der Tagesnotiz nie wieder auf.
+         * Kein belastbarer Plan. Was dann geschrieben wird, entscheidet
+         * [com.example.synchealth.essen.MealMerge]: Steht der Tag schon in der Notiz,
+         * gilt der Stand dort, sonst bleiben die fuenf geteilten Felder leer.
          */
         data class Unavailable(val reason: String) : Outcome
     }
@@ -52,9 +53,9 @@ class TandoorSource(
             }
         }
 
-        return when (val sum = MealPlanMath.sum(date, marker, householdEaters, entries, recipes)) {
-            is MealPlanMath.Result.Ready -> Outcome.Ready(sum.nutrition)
-            is MealPlanMath.Result.Incomplete -> Outcome.Unavailable(sum.reasons.joinToString("; "))
+        return when (val result = MealPlanMath.meals(date, marker, householdEaters, entries, recipes)) {
+            is MealPlanMath.Result.Ready -> Outcome.Ready(result.meals)
+            is MealPlanMath.Result.Incomplete -> Outcome.Unavailable(result.reasons.joinToString("; "))
         }
     }
 

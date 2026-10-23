@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import androidx.core.content.ContextCompat
 import com.example.synchealth.HealthReport
+import com.example.synchealth.essen.SamsungMeal
+import com.example.synchealth.essen.Slot
 import com.samsung.android.sdk.health.data.HealthDataService
 import com.samsung.android.sdk.health.data.HealthDataStore
 import com.samsung.android.sdk.health.data.permission.AccessType
@@ -86,6 +88,32 @@ class HealthRepository(private val context: Context) {
             fiber = fiber.orNull(),
             sugar = sugar.orNull(),
         )
+    }
+
+    /**
+     * Die einzelnen Ernaehrungseintraege des Tages, fuer die Liste im Essen-Callout.
+     * Nur zum Anzeigen: Die Summen kommen weiter aus [read].
+     */
+    suspend fun readMeals(date: LocalDate): List<SamsungMeal> {
+        val filter = LocalTimeFilter.of(date.atStartOfDay(), date.atTime(23, 59, 59))
+        val request = DataTypes.NUTRITION.readDataRequestBuilder.setLocalTimeFilter(filter).build()
+        return store.readDataAsync(request).await().dataList
+            .sortedBy { it.startTime }
+            .map { record ->
+                SamsungMeal(
+                    title = record.getValue(DataType.NutritionType.TITLE)?.takeIf { it.isNotBlank() }
+                        ?: "Eintrag",
+                    slot = slot(record.getValue(DataType.NutritionType.MEAL_TYPE)),
+                    calories = (record.getValue(DataType.NutritionType.CALORIES) as? Number)?.toDouble(),
+                )
+            }
+    }
+
+    private fun slot(type: DataType.NutritionType.MealType?): Slot = when (type) {
+        DataType.NutritionType.MealType.BREAKFAST -> Slot.FRUEHSTUECK
+        DataType.NutritionType.MealType.LUNCH -> Slot.MITTAG
+        DataType.NutritionType.MealType.DINNER -> Slot.ABEND
+        else -> Slot.SNACKS
     }
 
     /**

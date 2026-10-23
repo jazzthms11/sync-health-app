@@ -1,6 +1,6 @@
 package com.example.synchealth
 
-import com.example.synchealth.tandoor.TandoorSource
+import com.example.synchealth.tandoor.MealNutrition
 
 /**
  * Fuehrt die Quellen eines Tages zu einem [HealthReport] zusammen.
@@ -13,40 +13,23 @@ import com.example.synchealth.tandoor.TandoorSource
  */
 object DailyTotals {
 
-    /** [notes] traegt den Grund, wenn Tandoor keine Summe hergibt. Sonst ist sie leer. */
-    data class Merged(val report: HealthReport, val notes: List<String>)
-
     /**
-     * [meals] ist `null`, solange kein Tandoor-Zugang eingetragen ist. Dann bleibt es bei
-     * Samsung Health allein, so wie vor dem 27.09.2026.
+     * [planned] ist die Summe der Gerichte aus dem Essen-Callout, siehe
+     * [com.example.synchealth.essen.MealMerge]. `null` heisst: Es gibt fuer den Tag keinen
+     * belastbaren Stand.
      */
-    fun merge(samsung: HealthReport, meals: TandoorSource.Outcome?): Merged = when (meals) {
-        null -> Merged(samsung, emptyList())
-
-        is TandoorSource.Outcome.Ready -> Merged(
-            report = samsung.copy(
-                calories = sum(samsung.calories, meals.nutrition.calories),
-                protein = sum(samsung.protein, meals.nutrition.protein),
-                fat = sum(samsung.fat, meals.nutrition.fat),
-                fiber = sum(samsung.fiber, meals.nutrition.fiber),
-                sugar = sum(samsung.sugar, meals.nutrition.sugar),
-            ),
-            notes = emptyList(),
-        )
-
+    fun merge(samsung: HealthReport, planned: MealNutrition?): HealthReport = when (planned) {
         // Die halbe Summe zu schreiben waere schlimmer als gar nichts: Sie sieht richtig
-        // aus, zaehlt in den Wochen-Rollups mit und laesst sich hinterher nicht mehr von
+        // aus, zaehlt in den Monatsschnitt mit und laesst sich hinterher nicht mehr von
         // einer echten Zahl unterscheiden. Die vier Felder ohne Tandoor-Anteil, also
         // Schritte, Schlaf, Wasser und Bildschirmzeit, gehen unberuehrt durch.
-        is TandoorSource.Outcome.Unavailable -> Merged(
-            report = samsung.copy(
-                calories = null,
-                protein = null,
-                fat = null,
-                fiber = null,
-                sugar = null,
-            ),
-            notes = listOf(meals.reason),
+        null -> samsung.copy(calories = null, protein = null, fat = null, fiber = null, sugar = null)
+        else -> samsung.copy(
+            calories = sum(samsung.calories, planned.calories),
+            protein = sum(samsung.protein, planned.protein),
+            fat = sum(samsung.fat, planned.fat),
+            fiber = sum(samsung.fiber, planned.fiber),
+            sugar = sum(samsung.sugar, planned.sugar),
         )
     }
 

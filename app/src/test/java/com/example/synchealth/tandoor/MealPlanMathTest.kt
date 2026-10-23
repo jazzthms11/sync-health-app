@@ -1,6 +1,8 @@
 package com.example.synchealth.tandoor
 
+import com.example.synchealth.essen.Slot
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -24,29 +26,23 @@ class MealPlanMathTest {
         to: LocalDate = from,
     ) = MealPlanEntry(id, recipeId, "Bolognese", servings, note, mealType, from, to)
 
+    /** 400 g Nudeln mit 1600 kcal und 200 g Tomaten mit 40 kcal, fuer vier Portionen. */
     private fun recipe(
         servings: Double = 4.0,
-        calories: Double = 2000.0,
-        missing: Boolean = false,
-        properties: List<FoodProperty>? = null,
-    ) = Recipe(
-        id = 7,
-        name = "Bolognese",
-        servings = servings,
-        properties = properties ?: listOf(
-            FoodProperty(MealNutrition.FDC_CALORIES, calories, missing),
-            FoodProperty(MealNutrition.FDC_PROTEIN, 120.0, false),
-            FoodProperty(MealNutrition.FDC_FAT, 80.0, false),
-            FoodProperty(MealNutrition.FDC_FIBER, 40.0, false),
-            FoodProperty(MealNutrition.FDC_SUGAR, 20.0, false),
+        foods: List<RecipeFood> = listOf(
+            RecipeFood("Nudeln", 400.0, MealNutrition(1600.0, 48.0, 8.0, 12.0, 4.0)),
+            RecipeFood("Tomaten", 200.0, MealNutrition(40.0, 2.0, 0.4, 2.4, 6.0)),
         ),
-    )
+    ) = Recipe(id = 7, name = "Bolognese", servings = servings, foods = foods)
 
-    private fun sum(
+    private fun meals(
         entries: List<MealPlanEntry>,
         recipes: Map<Int, Recipe> = mapOf(7 to recipe()),
         eaters: Int = 2,
-    ) = MealPlanMath.sum(heute, "@leo", eaters, entries, recipes)
+    ) = MealPlanMath.meals(heute, "@leo", eaters, entries, recipes)
+
+    private fun ready(entries: List<MealPlanEntry>, recipes: Map<Int, Recipe> = mapOf(7 to recipe())) =
+        (meals(entries, recipes) as MealPlanMath.Result.Ready).meals
 
     @Test
     fun `nur die erste Zeile der Notiz traegt Marken`() {
@@ -86,22 +82,84 @@ class MealPlanMathTest {
     }
 
     @Test
-    fun `der Naehrwert wird auf den Anteil und die Portionszahl des Rezepts skaliert`() {
-        // 2000 kcal fuer vier Portionen, eine davon: 500.
-        val result = sum(listOf(entry())) as MealPlanMath.Result.Ready
+    fun `die Gramm werden auf den Anteil und die Portionszahl des Rezepts skaliert`() {
+        // Eine von vier Portionen: 100 g Nudeln, 50 g Tomaten.
+        val meal = ready(listOf(entry())).single()
 
-        assertEquals(500.0, result.nutrition.calories, 1e-9)
-        assertEquals(30.0, result.nutrition.protein, 1e-9)
+        assertEquals(listOf(100.0, 50.0), meal.ingredients.map { it.amount })
+        assertEquals(listOf(100.0, 50.0), meal.ingredients.map { it.planned })
+        assertEquals(410.0, meal.nutrition.calories, 1e-9)
+        assertEquals(12.5, meal.nutrition.protein, 1e-9)
     }
 
     @Test
-    fun `zwei Eintraege desselben Tages werden addiert`() {
-        val mittag = entry(id = 1)
-        val abend = entry(id = 2)
+    fun `die Naehrwerte gehen als Wert je Gramm weiter`() {
+        val nudeln = ready(listOf(entry())).single().ingredients.first()
 
-        val result = sum(listOf(mittag, abend)) as MealPlanMath.Result.Ready
+        assertEquals(4.0, nudeln.perUnit!!.calories, 1e-9)
+    }
 
-        assertEquals(1000.0, result.nutrition.calories, 1e-9)
+    @Test
+    fun `Planeintrag und Mahlzeit werden mitgefuehrt`() {
+        val meal = ready(listOf(entry(id = 263, mealType = "Abendessen"))).single()
+
+        assertEquals(263, meal.entryId)
+        assertEquals(Slot.ABEND, meal.slot)
+    }
+
+    @Test
+    fun `zwei Eintraege desselben Tages bleiben zwei Gerichte`() {
+        val result = ready(listOf(entry(id = 1), entry(id = 2)))
+
+        assertEquals(listOf(1, 2), result.map { it.entryId })
+    }
+
+    /**
+     * Fehlen einer Zutat Naehrwerte, haelt das den Tag nicht mehr an. Die Zutat traegt
+     * stattdessen eine Warnung und zaehlt nicht mit.
+     */
+    @Test
+    fun `eine Zutat ohne Naehrwerte zaehlt nicht mit und wird markiert`() {
+        val ohne = recipe(foods = listOf(RecipeFood("Parmesan", 40.0, null)))
+
+        val parmesan = ready(listOf(entry()), mapOf(7 to ohne)).single().ingredients.single()
+
+        assertEquals(10.0, parmesan.amount!!, 1e-9)
+        assertNull(parmesan.nutrition)
+        assertEquals("ohne Nährwerte", parmesan.warning)
+    }
+
+    @Test
+    fun `eine Zutat ohne Mengenangabe wird markiert`() {
+        val ohne = recipe(foods = listOf(RecipeFood("Senf", null, MealNutrition(10.0, 0.0, 0.0, 0.0, 0.0))))
+
+        val senf = ready(listOf(entry()), mapOf(7 to ohne)).single().ingredients.single()
+
+        assertNull(senf.amount)
+        assertEquals("ohne Mengenangabe", senf.warning)
+    }
+
+    /** Die Bolognese-Sosse: 1 Stueck mit 1131 kcal fuer vier Portionen, eine davon. */
+    @Test
+    fun `eine Zutat in Stueck rechnet je Stueck und rundet feiner`() {
+        val sosse = recipe(foods = listOf(RecipeFood("Bolognese", 1.0, MealNutrition(1131.64, 0.0, 0.0, 0.0, 0.0), "Stück")))
+
+        val ingredient = ready(listOf(entry()), mapOf(7 to sosse)).single().ingredients.single()
+
+        assertEquals(0.25, ingredient.amount!!, 1e-9)
+        assertEquals("Stück", ingredient.unit)
+        assertEquals(282.91, ingredient.nutrition!!.calories, 1e-9)
+    }
+
+    @Test
+    fun `Gramm werden auf eine Nachkommastelle gerundet`() {
+        // 150 g fuer 4 Portionen, davon ein Drittel einer Portion: 12.5 g.
+        val krumm = recipe(foods = listOf(RecipeFood("Reis", 150.0, null)))
+        val drittel = entry(servings = 1.0, note = "@leo @jazz @gast")
+
+        val reis = ready(listOf(drittel), mapOf(7 to krumm)).single().ingredients.single()
+
+        assertEquals(12.5, reis.amount!!, 1e-9)
     }
 
     /**
@@ -113,9 +171,7 @@ class MealPlanMathTest {
     fun `ein Eintrag ohne Rezept wird wortlos uebersprungen`() {
         val auswaerts = entry(recipeId = null, note = "")
 
-        val result = sum(listOf(auswaerts)) as MealPlanMath.Result.Ready
-
-        assertEquals(MealNutrition.NOTHING, result.nutrition)
+        assertEquals(emptyList<Any>(), ready(listOf(auswaerts)))
     }
 
     /**
@@ -129,7 +185,7 @@ class MealPlanMathTest {
 
         // 4 Portionen / 2 Tage / 2 Esser = 1 Portion, davon 2000 kcal / 4 = 500.
         assertEquals(1.0, MealPlanMath.share(abendessen, "@leo", 2), 1e-9)
-        assertEquals(500.0, (sum(listOf(abendessen)) as MealPlanMath.Result.Ready).nutrition.calories, 1e-9)
+        assertEquals(410.0, ready(listOf(abendessen)).single().nutrition.calories, 1e-9)
     }
 
     @Test
@@ -159,7 +215,7 @@ class MealPlanMathTest {
     fun `ein Mittagessen ohne Marke gibt keine Summe heraus`() {
         val ohneMarke = entry(note = "Statt Sahne: Hafercuisine")
 
-        val result = sum(listOf(ohneMarke)) as MealPlanMath.Result.Incomplete
+        val result = meals(listOf(ohneMarke)) as MealPlanMath.Result.Incomplete
 
         assertEquals(listOf("Bolognese (Mittagessen) traegt keine Marke"), result.reasons)
     }
@@ -173,54 +229,24 @@ class MealPlanMathTest {
     fun `eine unbekannte Mahlzeitenart ohne Marke gibt keine Summe heraus`() {
         val brunch = entry(note = "", mealType = "Brunch")
 
-        assertTrue(sum(listOf(brunch)) is MealPlanMath.Result.Incomplete)
+        assertTrue(meals(listOf(brunch)) is MealPlanMath.Result.Incomplete)
     }
 
     @Test
     fun `fremdes Essen kostet weder Anteil noch Meldung`() {
-        val result = sum(listOf(entry(note = "@jazz"))) as MealPlanMath.Result.Ready
-
-        assertEquals(MealNutrition.NOTHING, result.nutrition)
-    }
-
-    /**
-     * `missing_value` heisst, eine Zutat ist still aus der Summe gefallen. Die Zahl waere
-     * zu niedrig, und man sieht es ihr nicht an, also wird sie nicht herausgegeben.
-     */
-    @Test
-    fun `eine unvollstaendige Eigenschaft haelt den Lauf an`() {
-        val result = sum(listOf(entry()), mapOf(7 to recipe(missing = true)))
-
-        val incomplete = result as MealPlanMath.Result.Incomplete
-        assertEquals(listOf("Bolognese: Kalorien ist unvollstaendig"), incomplete.reasons)
-    }
-
-    @Test
-    fun `eine fehlende Eigenschaft haelt den Lauf genauso an`() {
-        val ohneZucker = recipe(
-            properties = listOf(
-                FoodProperty(MealNutrition.FDC_CALORIES, 2000.0, false),
-                FoodProperty(MealNutrition.FDC_PROTEIN, 120.0, false),
-                FoodProperty(MealNutrition.FDC_FAT, 80.0, false),
-                FoodProperty(MealNutrition.FDC_FIBER, 40.0, false),
-            ),
-        )
-
-        val result = sum(listOf(entry()), mapOf(7 to ohneZucker))
-
-        assertTrue((result as MealPlanMath.Result.Incomplete).reasons.single().contains("Zucker"))
+        assertEquals(emptyList<Any>(), ready(listOf(entry(note = "@jazz"))))
     }
 
     @Test
     fun `ein nicht abrufbares Rezept haelt den Lauf an`() {
-        val result = sum(listOf(entry()), recipes = emptyMap())
+        val result = meals(listOf(entry()), recipes = emptyMap())
 
         assertTrue((result as MealPlanMath.Result.Incomplete).reasons.single().contains("Bolognese"))
     }
 
     @Test
     fun `ein Rezept ohne Portionszahl wuerde durch null teilen`() {
-        val result = sum(listOf(entry()), mapOf(7 to recipe(servings = 0.0)))
+        val result = meals(listOf(entry()), mapOf(7 to recipe(servings = 0.0)))
 
         assertTrue(result is MealPlanMath.Result.Incomplete)
     }
