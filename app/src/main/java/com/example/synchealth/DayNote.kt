@@ -63,7 +63,6 @@ object DayNote {
                 firstSync = meals.firstSync,
                 meals = meals.meals,
                 samsung = samsungMeals,
-                totalCalories = report.calories,
                 reserved = EssenCallout.reservedKeys(content),
             )
             val withCallout = EssenCallout.place(content, callout)

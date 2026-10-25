@@ -61,7 +61,7 @@ class DayNoteTest {
         val result = build(notiz)
         val text = result.content!!
 
-        assertTrue(text.contains("> [!info]- Essen · 710 kcal"))
+        assertTrue(text.lines().contains("## Essen"))
         assertTrue(text.contains("- Kalorien:: 710"))
         assertTrue(text.contains("- Protein:: 30.5"))
         assertTrue(text.contains("- Schritte:: 8000"))
@@ -114,7 +114,7 @@ class DayNoteTest {
     fun `ohne Tandoor beim ersten Mal wird kein Essen geschrieben`() {
         val result = build(notiz, tandoor = TandoorSource.Outcome.Unavailable("Token abgelehnt."))
 
-        assertTrue(result.content!!.lines().none { it.startsWith("> [!info]") })
+        assertTrue(result.content!!.lines().none { it.startsWith("## Essen") })
         assertTrue(result.content!!.lines().any { it.matches(Regex("""- Kalorien::\s*""")) })
         assertNull(result.report.calories)
         assertTrue(result.content!!.contains("- Schritte:: 8000"))

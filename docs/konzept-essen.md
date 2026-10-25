@@ -32,36 +32,44 @@ Samsung Health bleibt nur Quelle zum Lesen. Extras, die nicht im Rezept stehen
 
 ## Tagesnotiz
 
-Ein eingeklappter Callout zwischen `## Notizen` und `## Daten`, darin je Mahlzeit ein eingeklappter
-Unter-Callout. Der aeussere Callout ist `[!info]`, die inneren `[!note]`. Zutaten
-stehen als Dataview-Felder in Klammer-Form, die Obsidian sauber als "**Tomaten:** 120"
-darstellt.
+Ein eigener Abschnitt `## Essen` zwischen `## Notizen` und `## Daten`, gesetzt wie die
+anderen H2-Ueberschriften. Darin je Mahlzeit ein eingeklappter `[!mahlzeit]`-Callout. Den
+Abschnitt selbst klappt `00 System/tagesuebersicht.js` im Vault beim Oeffnen zu, wie
+`## Daten` (Obsidian speichert den Klappzustand einer Ueberschrift nicht in der Datei).
+Zutaten stehen als Dataview-Felder in Klammer-Form, die Obsidian sauber als
+"**Tomaten:** 120" darstellt.
+
+Bis zum 25.10.2026 stand alles eine Ebene tiefer in einem `> [!info]- Essen`-Callout
+unter `## Notizen`. Die App liest diese Form weiter und ersetzt sie beim naechsten Sync.
+
+Der erster-sync-Kommentar steht im ersten Callout, nicht frei unter der Ueberschrift:
+`%%` blendet Obsidian nur in der Leseansicht aus, im Bearbeitungsmodus stuende er grau da.
 
 ```markdown
-> [!info]- Essen · 1970 kcal
+## Essen
+
+> [!mahlzeit]- Fruehstueck · 520 kcal
 > %% synchealth erster-sync=2026-10-24 %%
+> - Haferflocken mit Beeren · 380 kcal
+> - Kaffee mit Milch · 140 kcal
+
+> [!mahlzeit]- Mittag · 740 kcal
+> **Bowl** · 660 kcal
+> - [Vollkornreis:: 100]
+> - [Tomate:: 100]
+> - [Zutat Zucker:: 3.5]
+> - [Parmesan:: 30] ⚠ ohne Naehrwerte
+> - Fladenbrot ⚠ ohne Grammangabe
+> %% synchealth eintrag=259 rezept=13
+> Vollkornreis | 100 | 3.56 0.0889 0.0111 0.035 0.007
+> ...
+> %%
 >
-> > [!note]- Fruehstueck · 520 kcal
-> > - Haferflocken mit Beeren · 380 kcal
-> > - Kaffee mit Milch · 140 kcal
->
-> > [!note]- Mittag · 740 kcal
-> > **Bowl** · 660 kcal
-> > - [Vollkornreis:: 100]
-> > - [Tomate:: 100]
-> > - [Zutat Zucker:: 3.5]
-> > - [Parmesan:: 30] ⚠ ohne Naehrwerte
-> > - Fladenbrot ⚠ ohne Grammangabe
-> > %% synchealth eintrag=259 rezept=13
-> > Vollkornreis | 100 | 3.56 0.0889 0.0111 0.035 0.007
-> > ...
-> > %%
-> >
-> > **Samsung Health**
-> > - Apfel · 80 kcal
->
-> > [!note]- Snacks · 300 kcal
-> > - Riegel · 300 kcal
+> **Samsung Health**
+> - Apfel · 80 kcal
+
+> [!mahlzeit]- Snacks · 300 kcal
+> - Riegel · 300 kcal
 
 ## Daten
 ...
@@ -74,7 +82,7 @@ darstellt.
   Samsung Health. Ein Samsung-Eintrag "Mittag" steht also neben Tandoors Mittagessen.
 - **Tandoor-Gerichte** bringen Zutaten in Gramm, schon auf den eigenen Anteil
   umgerechnet (Portionen / Tage / Esser wie bisher in `MealPlanMath`).
-- **Naehrwerte je Gramm** stehen unsichtbar als `%% ... %%`-Kommentar im Callout.
+- **Naehrwerte je Gramm** stehen unsichtbar als `%% ... %%`-Kommentar im Abschnitt.
   Damit laesst sich eine Mahlzeit neu rechnen, ohne Tandoor zu fragen.
 - Die Felder unter `# Daten` (Kalorien, Protein, ...) bleiben wie heute und tragen die
   Summe aus dem Callout.

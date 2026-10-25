@@ -12,27 +12,41 @@ import java.time.LocalDate
 import java.util.Locale
 
 /**
- * Der eingeklappte Essen-Callout der Tagesnotiz: schreiben, wiederfinden, zuruecklesen.
+ * Der Abschnitt `## Essen` der Tagesnotiz: schreiben, wiederfinden, zuruecklesen.
  *
- * Er steht zwischen `## Notizen` und `## Daten` und sieht so aus:
+ * Er steht als eigene Ueberschrift zwischen `## Notizen` und `## Daten`, je Mahlzeit ein
+ * eingeklappter Callout. Eingeklappt wird der Abschnitt beim Oeffnen von
+ * `00 System/tagesuebersicht.js` im Vault, wie `## Daten`. So sieht er aus:
  *
  * ```
- * > [!info]- Essen · 1970 kcal
+ * ## Essen
+ *
+ * > [!mahlzeit]- Mittag · 660 kcal
  * > %% synchealth erster-sync=2026-10-24 %%
- * >
- * > > [!note]- Mittag · 660 kcal
- * > > **Bowl** · 660 kcal
- * > > - [Vollkornreis:: 100]
- * > > - [Zutat Zucker:: 3.5]
- * > > - [Fladenbrot:: 0.5] Stück
- * > > - [Parmesan:: 30] ⚠ ohne Nährwerte
- * > > - Senf ⚠ ohne Mengenangabe
- * > > %% synchealth eintrag=259 rezept=13
- * > > Vollkornreis | 100 | 3.56 0.0889 0.0111 0.0356 0.0071
- * > > Fladenbrot | 0.5 | 509 22.05 8.32 11.97 1 | Stück
- * > > Senf | - | -
- * > > %%
+ * > **Bowl** · 660 kcal
+ * > - [Vollkornreis:: 100]
+ * > - [Zutat Zucker:: 3.5]
+ * > - [Fladenbrot:: 0.5] Stück
+ * > - [Parmesan:: 30] ⚠ ohne Nährwerte
+ * > - Senf ⚠ ohne Mengenangabe
+ * > %% synchealth eintrag=259 rezept=13
+ * > Vollkornreis | 100 | 3.56 0.0889 0.0111 0.0356 0.0071
+ * > Fladenbrot | 0.5 | 509 22.05 8.32 11.97 1 | Stück
+ * > Senf | - | -
+ * > %%
  * ```
+ *
+ * `[!mahlzeit]` ist ein eigener Callout-Typ, Farbe und Icon kommen aus `vault-look.css`
+ * im Vault. Ohne das Snippet zeigt Obsidian ihn wie `[!note]`.
+ *
+ * Der erster-sync-Kommentar steht im ersten Callout: Obsidian blendet `%%` nur in der
+ * Leseansicht aus, im Bearbeitungsmodus stuende er grau unter der Ueberschrift. Im
+ * Callout verschwindet er wie die Kommentare der Gerichte. Nur ohne jede Mahlzeit steht
+ * er frei unter der Ueberschrift.
+ *
+ * Bis zum 25.10.2026 stand dasselbe eine Ebene tiefer in einem Callout
+ * `> [!info]- Essen · … kcal` unter `## Notizen`. Den liest [parse] weiter, und [place]
+ * ersetzt ihn durch den Abschnitt.
  *
  * **Die Notiz ist die Wahrheit.** Was dort steht, auch von Hand geaendert, liest
  * [parse] zurueck. Dafuer traegt jedes Gericht einen Kommentar, den Obsidian in der
@@ -60,22 +74,20 @@ object EssenCallout {
     // --- Schreiben --------------------------------------------------------------
 
     /**
-     * Der ganze Callout als Text, ohne abschliessenden Zeilenumbruch.
-     *
-     * [totalCalories] ist die Zahl, die auch unter `###### Essen` steht. [reserved] sind
-     * die Feldnamen der Notiz ausserhalb des Callouts, siehe [reservedKeys].
+     * Der ganze Abschnitt als Text, ab der Ueberschrift, ohne abschliessenden
+     * Zeilenumbruch. [reserved] sind die Feldnamen der Notiz ausserhalb des Abschnitts,
+     * siehe [reservedKeys].
      */
     fun render(
         firstSync: LocalDate,
         meals: List<PlannedMeal>,
         samsung: List<SamsungMeal>,
-        totalCalories: Double?,
         reserved: Set<String>,
     ): String {
         val lines = mutableListOf<String>()
-        // Abgeschnitten wie im Feld `Kalorien::`, damit Kopf und Feld dieselbe Zahl zeigen.
-        lines += "> [!info]- Essen" + (totalCalories?.let { " · ${it.toInt()} kcal" } ?: "")
-        lines += "> %% synchealth erster-sync=$firstSync %%"
+        lines += HEADING_TEXT
+        val marker = "%% synchealth erster-sync=$firstSync %%"
+        var markerPlaced = false
 
         for (slot in Slot.entries) {
             val planned = meals.filter { it.slot == slot }
@@ -84,43 +96,48 @@ object EssenCallout {
 
             val slotCalories = planned.sumOf { it.nutrition.calories } +
                 fromSamsung.sumOf { it.calories ?: 0.0 }
-            lines += ">"
-            lines += "> > [!note]- ${slot.label}" + kcalSuffix(slotCalories)
+            lines += ""
+            lines += "> [!mahlzeit]- ${slot.label}" + kcalSuffix(slotCalories)
+            if (!markerPlaced) {
+                lines += "> $marker"
+                markerPlaced = true
+            }
             planned.forEachIndexed { i, meal ->
-                if (i > 0) lines += "> >"
+                if (i > 0) lines += ">"
                 lines += renderMeal(meal, reserved)
             }
             if (fromSamsung.isNotEmpty()) {
                 if (planned.isNotEmpty()) {
-                    lines += "> >"
-                    lines += "> > **Samsung Health**"
+                    lines += ">"
+                    lines += "> **Samsung Health**"
                 }
-                fromSamsung.forEach { lines += "> > - ${clean(it.title)}" + kcalSuffix(it.calories) }
+                fromSamsung.forEach { lines += "> - ${clean(it.title)}" + kcalSuffix(it.calories) }
             }
         }
+        if (!markerPlaced) lines.add(1, marker)
         return lines.joinToString("\n")
     }
 
     private fun renderMeal(meal: PlannedMeal, reserved: Set<String>): List<String> {
         val lines = mutableListOf<String>()
-        lines += "> > **${clean(meal.recipeName)}**" + kcalSuffix(meal.nutrition.calories)
+        lines += "> **${clean(meal.recipeName)}**" + kcalSuffix(meal.nutrition.calories)
         for (ingredient in meal.ingredients) {
             val name = clean(ingredient.name)
             lines += when {
-                ingredient.amount == null -> "> > - $name ⚠ ${ingredient.warning}"
-                else -> "> > - [${key(name, reserved)}:: ${amount(ingredient.amount, ingredient.unit)}]" +
+                ingredient.amount == null -> "> - $name ⚠ ${ingredient.warning}"
+                else -> "> - [${key(name, reserved)}:: ${amount(ingredient.amount, ingredient.unit)}]" +
                     (if (ingredient.unit != GRAMS) " ${ingredient.unit}" else "") +
                     (ingredient.warning?.let { " ⚠ $it" } ?: "")
             }
         }
-        lines += "> > %% synchealth eintrag=${meal.entryId} rezept=${meal.recipeId}"
+        lines += "> %% synchealth eintrag=${meal.entryId} rezept=${meal.recipeId}"
         for (ingredient in meal.ingredients) {
             val planned = ingredient.planned?.let { amount(it, ingredient.unit) } ?: "-"
             val perUnit = ingredient.perUnit?.let { perUnit(it) } ?: "-"
             val unit = if (ingredient.unit != GRAMS) " | ${clean(ingredient.unit)}" else ""
-            lines += "> > ${clean(ingredient.name)} | $planned | $perUnit$unit"
+            lines += "> ${clean(ingredient.name)} | $planned | $perUnit$unit"
         }
-        lines += "> > %%"
+        lines += "> %%"
         return lines
     }
 
@@ -150,40 +167,72 @@ object EssenCallout {
 
     // --- Wiederfinden -----------------------------------------------------------
 
-    private val START = Regex("""^> \[!info][+-]? Essen\b.*$""")
+    private const val HEADING_TEXT = "## Essen"
+    private val HEADING = Regex("""^## Essen\s*$""")
+    private val LEGACY_START = Regex("""^> \[!info][+-]? Essen\b.*$""")
+    private val FIRST_SYNC_LINE = Regex("""^%% synchealth erster-sync=.*%%\s*$""")
 
-    /** Die Zeilen des Callouts als Bereich, oder `null`, wenn die Notiz keinen hat. */
-    fun locate(content: String): IntRange? {
-        val lines = content.split("\n")
-        val start = lines.indexOfFirst { START.matches(it) }
+    /** Wo der Abschnitt steht, und ob noch als alter `[!info]`-Callout. */
+    private data class Block(val range: IntRange, val legacy: Boolean)
+
+    /**
+     * Zum Abschnitt gehoeren nach der Ueberschrift nur Leerzeilen, Callout-Zeilen und der
+     * erster-sync-Kommentar. Was jemand darunter von Hand schreibt, endet ihn und bleibt
+     * stehen, statt beim naechsten Lauf ueberschrieben zu werden.
+     */
+    private fun find(lines: List<String>): Block? {
+        val heading = lines.indexOfFirst { HEADING.matches(it) }
+        if (heading >= 0) {
+            var end = heading
+            while (end + 1 < lines.size && belongs(lines[end + 1])) end++
+            while (end > heading && lines[end].isBlank()) end--
+            return Block(heading..end, legacy = false)
+        }
+        val start = lines.indexOfFirst { LEGACY_START.matches(it) }
         if (start < 0) return null
         var end = start
         while (end + 1 < lines.size && lines[end + 1].startsWith(">")) end++
-        return start..end
+        return Block(start..end, legacy = true)
     }
 
+    private fun belongs(line: String) =
+        line.isBlank() || line.startsWith(">") || FIRST_SYNC_LINE.matches(line)
+
     /**
-     * Setzt [callout] in die Notiz: an die Stelle des alten, oder neu direkt vor
-     * `## Daten`. Gibt `null` zurueck, wenn die Notiz kein `## Daten` hat; dann wird nichts
-     * geraten, sondern gemeldet.
+     * Der Inhalt unter der Ueberschrift, in der heutigen Form. Beim alten Callout faellt
+     * die erste Ebene `>` weg, dann gleichen sich beide Zeile fuer Zeile.
      */
-    fun place(content: String, callout: String): String? {
+    private fun body(lines: List<String>, block: Block): List<String> {
+        val inner = lines.subList(block.range.first + 1, block.range.last + 1)
+        return if (!block.legacy) inner else inner.map { it.removePrefix(">").removePrefix(" ") }
+    }
+
+    /** Die Zeilen des Abschnitts als Bereich, oder `null`, wenn die Notiz keinen hat. */
+    fun locate(content: String): IntRange? = find(content.split("\n"))?.range
+
+    /**
+     * Setzt [section] in die Notiz: an die Stelle des alten Abschnitts (oder alten
+     * Callouts), oder neu direkt vor `## Daten`. Gibt `null` zurueck, wenn die Notiz kein
+     * `## Daten` hat; dann wird nichts geraten, sondern gemeldet.
+     */
+    fun place(content: String, section: String): String? {
         val lines = content.split("\n").toMutableList()
-        val range = locate(content)
-        if (range != null) {
-            repeat(range.last - range.first + 1) { lines.removeAt(range.first) }
-            lines.addAll(range.first, callout.split("\n"))
+        val block = find(lines)
+        // Eine Leerzeile davor und danach, sonst klebt die Ueberschrift an der Liste
+        // darueber oder Obsidian zieht die folgende Zeile in den letzten Callout.
+        val insert = section.split("\n")
+        if (block != null) {
+            val at = block.range.first
+            repeat(block.range.last - at + 1) { lines.removeAt(at) }
+            val after = if (at < lines.size && lines[at].isNotBlank()) listOf("") else emptyList()
+            val before = if (at > 0 && lines[at - 1].isNotBlank()) listOf("") else emptyList()
+            lines.addAll(at, before + insert + after)
             return lines.joinToString("\n")
         }
         val daten = lines.indexOfFirst { DATEN.matches(it) }
         if (daten < 0) return null
-        // Eine Leerzeile davor und danach, sonst klebt der Callout an der Liste darueber
-        // oder Obsidian zieht die Ueberschrift in den Callout.
-        val insert = mutableListOf<String>()
-        if (daten > 0 && lines[daten - 1].isNotBlank()) insert += ""
-        insert += callout.split("\n")
-        insert += ""
-        lines.addAll(daten, insert)
+        val before = if (daten > 0 && lines[daten - 1].isNotBlank()) listOf("") else emptyList()
+        lines.addAll(daten, before + insert + "")
         return lines.joinToString("\n")
     }
 
@@ -233,23 +282,25 @@ object EssenCallout {
     // --- Zuruecklesen -----------------------------------------------------------
 
     private val FIRST_SYNC = Regex("""erster-sync=(\d{4}-\d{2}-\d{2})""")
-    private val SLOT = Regex("""^> > \[!note][+-]? (.+?)(?: · .*)?$""")
-    private val MEAL_HEAD = Regex("""^> > \*\*(.+?)\*\*(?: · .*)?$""")
-    private val FIELD = Regex("""^> > - \[([^\[\]]+?):: *([^\[\]]*?) *](.*)$""")
-    private val COMMENT_START = Regex("""^> > %% synchealth eintrag=(\d+) rezept=(\d+)\s*$""")
-    private val COMMENT_END = Regex("""^> > %%\s*$""")
-    private val COMMENT_ROW = Regex("""^> > (.+?) \| (\S+) \| ([^|]+?)(?: \| (.+))?$""")
+    // `note` ist die Form bis zum 25.10.2026, gelesen wird beides.
+    private val SLOT = Regex("""^> \[!(?:mahlzeit|note)][+-]? (.+?)(?: · .*)?$""")
+    private val MEAL_HEAD = Regex("""^> \*\*(.+?)\*\*(?: · .*)?$""")
+    private val FIELD = Regex("""^> - \[([^\[\]]+?):: *([^\[\]]*?) *](.*)$""")
+    private val COMMENT_START = Regex("""^> %% synchealth eintrag=(\d+) rezept=(\d+)\s*$""")
+    private val COMMENT_END = Regex("""^> %%\s*$""")
+    private val COMMENT_ROW = Regex("""^> (.+?) \| (\S+) \| ([^|]+?)(?: \| (.+))?$""")
 
-    /** Liest den Callout zurueck. `null`, wenn die Notiz keinen hat. */
+    /** Liest den Abschnitt zurueck. `null`, wenn die Notiz keinen hat. */
     fun parse(content: String): Parsed? {
-        val range = locate(content) ?: return null
-        val lines = content.split("\n").subList(range.first, range.last + 1)
+        val all = content.split("\n")
+        val block = find(all) ?: return null
+        val lines = body(all, block)
         val issues = mutableListOf<String>()
         val meals = mutableListOf<PlannedMeal>()
 
         val firstSync = lines.firstNotNullOfOrNull { FIRST_SYNC.find(it) }
             ?.let { runCatching { LocalDate.parse(it.groupValues[1]) }.getOrNull() }
-        if (firstSync == null) issues += "Essen-Callout ohne lesbares erster-sync"
+        if (firstSync == null) issues += "Essen-Abschnitt ohne lesbares erster-sync"
 
         var slot: Slot? = null
         var recipeName: String? = null
@@ -311,7 +362,7 @@ object EssenCallout {
         for (row in rows) {
             val m = COMMENT_ROW.find(row)
             if (m == null) {
-                issues += "$name: Kommentarzeile unlesbar: ${row.removePrefix("> > ")}"
+                issues += "$name: Kommentarzeile unlesbar: ${row.removePrefix("> ")}"
                 continue
             }
             val ingredient = m.groupValues[1]
@@ -319,7 +370,7 @@ object EssenCallout {
             val perUnit = m.groupValues[3].takeIf { it.trim() != "-" }?.let { parsePerUnit(it) }
             val unit = m.groupValues[4].trim().ifEmpty { GRAMS }
             if (m.groupValues[2] != "-" && planned == null || m.groupValues[3].trim() != "-" && perUnit == null) {
-                issues += "$name: Kommentarzeile unlesbar: ${row.removePrefix("> > ")}"
+                issues += "$name: Kommentarzeile unlesbar: ${row.removePrefix("> ")}"
                 continue
             }
 

@@ -81,37 +81,38 @@ class EssenCalloutTest {
     )
 
     private fun render(meals: List<PlannedMeal> = listOf(bowl), content: String = notiz) =
-        EssenCallout.render(tag, meals, samsung, 1000.0, EssenCallout.reservedKeys(content))
+        EssenCallout.render(tag, meals, samsung, EssenCallout.reservedKeys(content))
 
     private fun placed(meals: List<PlannedMeal> = listOf(bowl)) =
         EssenCallout.place(notiz, render(meals))!!
 
     @Test
-    fun `der Callout steht zwischen Notizen und Daten`() {
+    fun `Essen steht als eigene Ueberschrift zwischen Notizen und Daten`() {
         val lines = placed().split("\n")
 
-        val callout = lines.indexOfFirst { it.startsWith("> [!info]- Essen") }
+        val essen = lines.indexOf("## Essen")
         val daten = lines.indexOf("## Daten")
-        assertTrue(callout > lines.indexOf("## Notizen"))
-        assertTrue(callout < daten)
+        assertTrue(essen > lines.indexOf("## Notizen"))
+        assertTrue(essen < daten)
+        assertEquals("", lines[essen - 1])
         assertEquals("", lines[daten - 1])
     }
 
     @Test
-    fun `Kopf und Mahlzeiten tragen ihre kcal`() {
+    fun `Mahlzeiten tragen ihre kcal`() {
         val text = render()
 
-        assertTrue(text.startsWith("> [!info]- Essen · 1000 kcal\n> %% synchealth erster-sync=2026-10-24 %%"))
-        assertTrue(text.contains("> > [!note]- Frühstück · 380 kcal"))
+        assertTrue(text.startsWith("## Essen\n\n> [!mahlzeit]- Frühstück · 380 kcal\n> %% synchealth erster-sync=2026-10-24 %%\n"))
+        assertTrue(text.contains("> [!mahlzeit]- Frühstück · 380 kcal"))
         // 100 g Reis zu 3.56, 3.5 g Zucker zu 4 und ein halbes Fladenbrot zu 509, dazu der
         // Apfel aus Samsung Health.
-        assertTrue(text.contains("> > [!note]- Mittag · 705 kcal"))
-        assertTrue(text.contains("> > **Bowl** · 625 kcal"))
+        assertTrue(text.contains("> [!mahlzeit]- Mittag · 705 kcal"))
+        assertTrue(text.contains("> **Bowl** · 625 kcal"))
     }
 
     @Test
     fun `Zutaten sind Felder in Klammerform ohne Einheit`() {
-        assertTrue(render().contains("> > - [Vollkornreis:: 100]\n"))
+        assertTrue(render().contains("> - [Vollkornreis:: 100]\n"))
     }
 
     /**
@@ -120,7 +121,7 @@ class EssenCalloutTest {
      */
     @Test
     fun `eine Zutat mit dem Namen eines Messwerts bekommt den Vorsatz`() {
-        assertTrue(render().contains("> > - [Zutat Zucker:: 3.5]"))
+        assertTrue(render().contains("> - [Zutat Zucker:: 3.5]"))
     }
 
     @Test
@@ -137,24 +138,24 @@ class EssenCalloutTest {
     fun `Zutaten ohne Naehrwerte oder Gramm werden markiert`() {
         val text = render()
 
-        assertTrue(text.contains("> > - [Parmesan:: 30] ⚠ ohne Nährwerte"))
-        assertTrue(text.contains("> > - Senf ⚠ ohne Mengenangabe"))
+        assertTrue(text.contains("> - [Parmesan:: 30] ⚠ ohne Nährwerte"))
+        assertTrue(text.contains("> - Senf ⚠ ohne Mengenangabe"))
     }
 
     @Test
     fun `eine Zutat ohne Gramm steht mit ihrer Einheit da`() {
         val text = render()
 
-        assertTrue(text.contains("> > - [Fladenbrot:: 0.5] Stück\n"))
-        assertTrue(text.contains("> > Fladenbrot | 0.5 | 509 22.05 8.32 11.97 1 | Stück"))
+        assertTrue(text.contains("> - [Fladenbrot:: 0.5] Stück\n"))
+        assertTrue(text.contains("> Fladenbrot | 0.5 | 509 22.05 8.32 11.97 1 | Stück"))
     }
 
     @Test
     fun `Samsung-Eintraege stehen unter ihrer Mahlzeit`() {
         val text = render()
 
-        assertTrue(text.contains("> > - Haferflocken · 380 kcal"))
-        assertTrue(text.contains("> > **Samsung Health**\n> > - Apfel · 80 kcal"))
+        assertTrue(text.contains("> - Haferflocken · 380 kcal"))
+        assertTrue(text.contains("> **Samsung Health**\n> - Apfel · 80 kcal"))
     }
 
     @Test
@@ -188,7 +189,7 @@ class EssenCalloutTest {
 
     @Test
     fun `eine geloeschte Zeile heisst nicht gegessen`() {
-        val edited = placed().replace("> > - [Vollkornreis:: 100]\n", "")
+        val edited = placed().replace("> - [Vollkornreis:: 100]\n", "")
 
         val reis = EssenCallout.parse(edited)!!.existing.meals.single().ingredients.first()
 
@@ -206,7 +207,7 @@ class EssenCalloutTest {
 
     @Test
     fun `eine unbekannte Zutat wird gemeldet`() {
-        val edited = placed().replace("> > - [Vollkornreis:: 100]", "> > - [Vollkornreis:: 100]\n> > - [Kaese:: 20]")
+        val edited = placed().replace("> - [Vollkornreis:: 100]", "> - [Vollkornreis:: 100]\n> - [Kaese:: 20]")
 
         assertTrue(EssenCallout.parse(edited)!!.issues.single().contains("Kaese"))
     }
@@ -217,7 +218,7 @@ class EssenCalloutTest {
         val twice = EssenCallout.place(once, render(content = once))!!
 
         assertEquals(once, twice)
-        assertEquals(1, twice.split("\n").count { it.startsWith("> [!info]- Essen") })
+        assertEquals(1, twice.split("\n").count { it == "## Essen" })
     }
 
     /**
@@ -230,6 +231,62 @@ class EssenCalloutTest {
 
         assertTrue("vollkornreis" !in reserved)
         assertTrue("zutat-zucker" !in reserved)
+    }
+
+    /** So stand es bis zum 25.10.2026 in der Notiz: ein Callout unter `## Notizen`. */
+    private fun legacy(): String = placed().let { now ->
+        val lines = now.split("\n")
+        val range = EssenCallout.locate(now)!!
+        val marker = "%% synchealth erster-sync=2026-10-24 %%"
+        val old = listOf("> [!info]- Essen · 1000 kcal", "> $marker") +
+            lines.subList(range.first + 1, range.last + 1)
+                .filter { !it.contains(marker) }
+                .map { if (it.isEmpty()) ">" else "> ${it.replace("[!mahlzeit]", "[!note]")}" }
+        // Der alte Callout stand ohne Ueberschrift im Notizen-Abschnitt.
+        (lines.subList(0, range.first - 1) + "" + old + lines.subList(range.last + 1, lines.size))
+            .joinToString("\n")
+    }
+
+    @Test
+    fun `der alte Callout wird gelesen und durch die Ueberschrift ersetzt`() {
+        val old = legacy()
+        assertTrue(old.contains("> > - [Vollkornreis:: 100]"))
+        assertTrue("## Essen" !in old.split("\n"))
+
+        val parsed = EssenCallout.parse(old)!!
+        assertEquals(emptyList<String>(), parsed.issues)
+        assertEquals(tag, parsed.existing.firstSync)
+        assertEquals(listOf(bowl), parsed.existing.meals)
+
+        assertEquals(placed(), EssenCallout.place(old, render(content = old)))
+    }
+
+    /** So stand es am 25.10.2026 kurz in der Notiz: der Kommentar frei unter der Ueberschrift. */
+    @Test
+    fun `ein freier erster-sync-Kommentar wandert in den ersten Callout`() {
+        val marker = "%% synchealth erster-sync=2026-10-24 %%"
+        val loose = placed().replace("\n> $marker", "").replace("\n## Essen\n", "\n## Essen\n$marker\n")
+        assertTrue(loose.contains("## Essen\n$marker\n\n> [!mahlzeit]"))
+
+        assertEquals(tag, EssenCallout.parse(loose)!!.existing.firstSync)
+        assertEquals(placed(), EssenCallout.place(loose, render(content = loose)))
+    }
+
+    @Test
+    fun `ohne Mahlzeiten steht der Kommentar unter der Ueberschrift`() {
+        val text = EssenCallout.render(tag, emptyList(), emptyList(), emptySet())
+
+        assertEquals("## Essen\n%% synchealth erster-sync=2026-10-24 %%", text)
+        assertEquals(tag, EssenCallout.parse(EssenCallout.place(notiz, text)!!)!!.existing.firstSync)
+    }
+
+    @Test
+    fun `eigener Text unter der Ueberschrift bleibt stehen`() {
+        val withText = placed().replace("\n\n## Daten", "\n\nNachtisch ausgelassen.\n\n## Daten")
+
+        val again = EssenCallout.place(withText, render(content = withText))!!
+
+        assertEquals(withText, again)
     }
 
     @Test
