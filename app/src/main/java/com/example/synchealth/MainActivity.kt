@@ -46,7 +46,10 @@ import com.example.synchealth.ui.theme.Zahl
 import com.example.synchealth.vault.DailyNoteSync
 import com.example.synchealth.vault.EssenCallout
 import com.example.synchealth.vault.WebDavClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -54,6 +57,9 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 private const val TAG = "SyncHealth"
+
+/** Wie lange ein Tag angezeigt bleiben muss, bevor er geladen wird, siehe changeDate. */
+private const val LOAD_DELAY_MS = 700L
 
 class MainActivity : ComponentActivity() {
 
@@ -93,7 +99,14 @@ class MainActivity : ComponentActivity() {
 
     /** Was gerade in einem Grammfeld getippt wird, auch wenn es noch keine Zahl ist ("12,"). */
     private var gramTexts by mutableStateOf<Map<Pair<Int, String>, String>>(emptyMap())
+    /** Nur der Sync, der in die Notiz schreibt. Solange er laeuft, bleibt der Tag fest. */
     private var isSyncing by mutableStateOf(false)
+
+    /** Ein Tag wird gelesen. Die Pfeile bleiben dabei frei, siehe [changeDate]. */
+    private var isLoading by mutableStateOf(false)
+
+    /** Das Laden des angezeigten Tags, wartend oder laufend. Ein neuer Tag bricht es ab. */
+    private var loadJob: Job? = null
     private var showSettings by mutableStateOf(false)
     private var hasScreenTimeAccess by mutableStateOf(false)
 
@@ -144,19 +157,33 @@ class MainActivity : ComponentActivity() {
     /**
      * Nur lesen, nicht schreiben. Das Oeffnen der App und das Umstellen des Datums fassen
      * die Tagesnotiz bewusst nicht an, geschrieben wird auf Knopfdruck.
+     *
+     * Mit [wait] beginnt das Lesen erst, wenn der Tag so lange angezeigt bleibt. Wer
+     * schnell durch die Tage tippt, loest so nur fuer den Tag eine Abfrage aus, auf dem er
+     * stehen bleibt. Jeder Aufruf bricht das vorige Laden ab, und ein Ergebnis fuer einen
+     * anderen Tag als den angezeigten wird verworfen.
      */
-    private fun loadHealthData() {
+    private fun loadHealthData(wait: Long = 0L) {
         val repo = health ?: return
-        lifecycleScope.launch {
-            isSyncing = true
+        loadJob?.cancel()
+        isLoading = false
+        val date = selectedDate
+        loadJob = lifecycleScope.launch {
+            delay(wait)
+            isLoading = true
             try {
-                inputs = readInputs(repo, selectedDate)
-                recompute()
+                val read = readInputs(repo, date)
+                if (date == selectedDate) {
+                    inputs = read
+                    recompute()
+                }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Lesen fehlgeschlagen: ${e.message}")
                 snackbar.showSnackbar("Samsung Health lieferte nichts: ${e.message}")
             } finally {
-                isSyncing = false
+                if (loadJob == coroutineContext[Job]) isLoading = false
             }
         }
     }
@@ -240,6 +267,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startSync() {
+        // Der Sync liest selbst frisch, ein wartendes oder laufendes Laden waere doppelt.
+        loadJob?.cancel()
+        isLoading = false
         lifecycleScope.launch {
             isSyncing = true
             try {
@@ -282,6 +312,8 @@ class MainActivity : ComponentActivity() {
                 }
                 recompute()
                 snackbar.showSnackbar(describe(outcome, notes))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Sync fehlgeschlagen", e)
                 snackbar.showSnackbar("Sync fehlgeschlagen: ${e.message}")
@@ -336,12 +368,22 @@ class MainActivity : ComponentActivity() {
         dialog.show()
     }
 
-    /** Einen Tag vor oder zurueck. In die Zukunft gibt es nichts zu holen. */
+    /**
+     * Einen Tag vor oder zurueck. In die Zukunft gibt es nichts zu holen.
+     *
+     * Die Werte des vorigen Tags verschwinden sofort, damit unter dem neuen Datum nie die
+     * Zahlen eines anderen Tags stehen. Geladen wird erst nach [LOAD_DELAY_MS], oder sofort
+     * mit dem Sync-Knopf.
+     */
     private fun changeDate(date: LocalDate) {
         if (date.isAfter(LocalDate.now()) || date == selectedDate) return
         selectedDate = date
         clearEdits()
-        loadHealthData()
+        inputs = null
+        day = null
+        healthReport = HealthReport()
+        hinweise = emptyList()
+        loadHealthData(wait = LOAD_DELAY_MS)
     }
 
     @Composable
@@ -424,6 +466,14 @@ class MainActivity : ComponentActivity() {
                     style = MaterialTheme.typography.headlineMedium,
                     color = v.titel,
                 )
+                // Auch waehrend der Wartezeit: Der Tag ist gewaehlt, seine Werte kommen noch.
+                if (health != null && inputs == null && !isSyncing) {
+                    Text(
+                        if (isLoading) "Lädt …" else "Gleich …",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = v.leise,
+                    )
+                }
             }
             IconButton(
                 onClick = { changeDate(selectedDate.plusDays(1)) },
