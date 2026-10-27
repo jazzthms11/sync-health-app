@@ -214,7 +214,10 @@ object TandoorJson {
                 val amount = ingredient.double("amount") ?: 0.0
                 if (amount == 0.0 || ingredient.bool("no_amount")) continue
                 acc.counted = true
-                val grams = grams(ingredient)
+                // Bei einem verlinkten Rezept zaehlt die Einheit der Zeile. Eine gepflegte
+                // Umrechnung wie "1 Stück Bolognese = 1300 g" ist das Gewicht nach dem
+                // Kochen, und dagegen liesse sich das Rohgewicht der Zutaten nicht teilen.
+                val grams = if (acc.recipeId != null) directGrams(ingredient) else grams(ingredient)
                 if (grams != null) acc.grams += grams else acc.allGrams = false
                 val unit = ingredient.get("unit")?.takeIf { it.isJsonObject }?.asJsonObject?.string("name")
                 acc.byUnit[unit] = (acc.byUnit[unit] ?: 0.0) + amount
@@ -232,12 +235,28 @@ object TandoorJson {
         }
     }
 
-    /** Die Rezepte, die ein Schritt als Ganzes einbindet, in Schrittreihenfolge. */
-    private fun stepRecipes(root: JsonObject): List<Int> =
-        root.get("steps")?.takeIf { it.isJsonArray }?.asJsonArray
-            ?.filter { it.isJsonObject }
-            ?.mapNotNull { it.asJsonObject.int("step_recipe") }
-            .orEmpty()
+    /**
+     * Die Rezepte, die ein Schritt als Ganzes einbindet, in Schrittreihenfolge.
+     *
+     * Ohne die, auf die auch eine Zutat zeigt: So sind etwa Lasagne und Burger gebaut,
+     * der Schritt zeigt, wie die Sosse gemacht wird, und die Zutatenzeile sagt, wie viel
+     * davon hineinkommt. Zaehlen darf sie nur einmal, und die Zeile traegt die Menge.
+     * Auch eine Zeile ohne Menge zaehlt als Verweis, sonst kaeme die Sosse ueber den
+     * Schritt doch wieder ganz hinein.
+     */
+    private fun stepRecipes(root: JsonObject): List<Int> {
+        val steps = root.get("steps")?.takeIf { it.isJsonArray }?.asJsonArray
+            ?.filter { it.isJsonObject }?.map { it.asJsonObject }.orEmpty()
+        val byFood = steps.flatMap { step ->
+            step.get("ingredients")?.takeIf { it.isJsonArray }?.asJsonArray
+                ?.filter { it.isJsonObject }
+                ?.mapNotNull { line ->
+                    line.asJsonObject.get("food")?.takeIf { it.isJsonObject }?.asJsonObject
+                        ?.get("recipe")?.takeIf { it.isJsonObject }?.asJsonObject?.int("id")
+                }.orEmpty()
+        }.toSet()
+        return steps.mapNotNull { it.int("step_recipe") }.filter { it !in byFood }
+    }
 
     /**
      * Die Menge einer Zutatenzeile in Gramm, oder `null`, wenn Tandoor sie nicht kennt.
@@ -255,6 +274,11 @@ object TandoorJson {
         conversions.firstOrNull { it.string("unit") == "g" }?.double("amount")?.let { return it }
         conversions.firstOrNull { it.string("unit") == "kg" }?.double("amount")?.let { return it * 1000.0 }
 
+        return directGrams(ingredient)
+    }
+
+    /** Die Grammzahl, wenn die Zeile selbst in g oder kg steht, ohne Umrechnung. */
+    private fun directGrams(ingredient: JsonObject): Double? {
         val unit = ingredient.get("unit")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
         val amount = ingredient.double("amount") ?: return null
         return when (unit.string("base_unit") ?: unit.string("name")) {

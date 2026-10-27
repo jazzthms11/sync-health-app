@@ -301,5 +301,55 @@ class TandoorJsonTest {
         assertNull(rezeptOhneVerweis().foods.first().recipeId)
     }
 
+    /**
+     * So ist "Lasagne vegetarisch" gebaut: Ein Schritt bindet die Bechamelsauce ein, und
+     * eine Zutatenzeile zeigt auf dasselbe Rezept. Zaehlen darf nur die Zeile.
+     */
+    @Test
+    fun `ein Schritt-Rezept, auf das auch eine Zutat zeigt, zaehlt nicht doppelt`() {
+        val doppelt = """
+            {
+              "id": 11, "name": "Lasagne vegetarisch", "servings": 4,
+              "steps": [
+                { "step_recipe": 6, "ingredients": [] },
+                { "step_recipe": 5, "ingredients": [] },
+                { "step_recipe": null, "ingredients": [
+                  { "food": { "id": 1, "name": "Bechamelsauce", "recipe": { "id": 6 } },
+                    "unit": { "name": "Stück" }, "amount": 1.0, "conversions": [] },
+                  { "food": { "id": 2, "name": "Bolognese", "recipe": { "id": 5 } },
+                    "unit": { "name": "Stück" }, "amount": 0.0, "conversions": [] }
+                ] }
+              ],
+              "food_properties": {}
+            }
+        """.trimIndent()
+
+        assertEquals(emptyList<Int>(), TandoorJson.recipe(doppelt, fdcByType).stepRecipes)
+    }
+
+    /**
+     * So steht die Bolognese in "Lasagne mit Hackfleisch": 1 Stück, gepflegt als 1300 g
+     * nach dem Kochen. Die Zeile muss in Stück bleiben, sonst teilte die App das
+     * Kochgewicht durch das Rohgewicht der Zutaten und zaehlte nur die halbe Sosse.
+     */
+    @Test
+    fun `ein verlinktes Rezept behaelt die Einheit der Zeile`() {
+        val lasagne = """
+            {
+              "id": 7, "name": "Lasagne mit Hackfleisch", "servings": 4,
+              "steps": [ { "ingredients": [
+                { "food": { "id": 1, "name": "Bolognese", "recipe": { "id": 4 } },
+                  "unit": { "name": "Stück" }, "amount": 1.0,
+                  "conversions": [ { "unit": "Stück", "amount": 1.0 }, { "unit": "g", "amount": 1300.0 } ] }
+              ] } ],
+              "food_properties": {}
+            }
+        """.trimIndent()
+
+        val bolognese = TandoorJson.recipe(lasagne, fdcByType).foods.single()
+        assertEquals("Stück", bolognese.unit)
+        assertEquals(1.0, bolognese.amount!!, 1e-9)
+    }
+
     private fun rezeptOhneVerweis() = TandoorJson.recipe(rezept, fdcByType)
 }

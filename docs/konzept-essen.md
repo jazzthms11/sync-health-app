@@ -179,13 +179,30 @@ Zutaten.
   das ganze Rezept (so rechnet Tandoor selbst), Portionen (`Portion`, `Personen` oder der
   `servings_text` des Unterrezepts) teilen durch dessen Portionen, Gramm durch sein
   Gewicht. Laesst sich nichts zuordnen, bleibt die Zeile wie bisher stehen.
+- **Es zaehlt die Einheit der Zeile, nicht Tandoors Umrechnung.** "1 Stück Bolognese"
+  ist in Tandoor als 1300 g gepflegt, das Gewicht nach dem Kochen. Gegen das Rohgewicht
+  der Zutaten (2626 g) geteilt, kam nur die halbe Sosse an. Gramm gelten nur, wenn die
+  Zeile selbst in g oder kg steht.
+- **`Stück` mit Stueckzahl am Unterrezept:** Steht beim Unterrezept als Portionsangabe
+  `Stück` (Fladenbrot: 4 Stück), ist ein Stueck eine Portion davon. Seit dem 27.10.2026
+  so in Tandoor gepflegt. Vorher zaehlte "1 Stück Fladenbrot" im Doener den ganzen Teig,
+  2039 statt 510 kcal; betroffen waren der 24., 25. und 26.10.2026. Ob der Teig in 4 oder
+  8 Stuecke geteilt wird, aendert pro Person nichts: ein grosses oder zwei kleine sind
+  beide ein Viertel des Teigs.
 - **Ein Schritt mit eingebundenem Rezept** (`step_recipe`) zaehlt das Unterrezept einmal
-  ganz, so wie Tandoor es anzeigt.
+  ganz, so wie Tandoor es anzeigt. Zeigt im selben Rezept auch eine Zutat darauf (Lasagne,
+  Burger, Wraps), zaehlt nur die Zutat mit ihrer Menge, sonst kaeme es doppelt hinein.
 - **Gerechnet wird aus den Zutaten des Unterrezepts**, nicht aus den Naehrwerten am
   verlinkten Lebensmittel. Die sind eine Momentaufnahme: Am 27.10.2026 stand
   Kartoffelknödel dort mit 1704 kcal, das Rezept selbst ergibt 1334 kcal.
 - Laesst sich ein Unterrezept nicht abrufen, gibt der Tag keine Summe heraus, wie bei
   jedem anderen Rezept.
+- **In Tandoor nachgezogen am 27.10.2026**, damit jede Sosse mit einer Mengenzeile drinsteht:
+  Burgerbaguette und Burgerbaguette vegetarisch je 0.5 Stück Burgersoße (eine Portion pro
+  Baguette), Crispy-Chickenburger 1 Stück Burgersoße, Cannelloni und Moussaka je 1 Stück
+  Bechamelsauce, grüner Salat 0.5 Stück Salatsoße (eine Portion pro Person, statt 353 kcal
+  Dressing), Lasagne mit Hackfleisch je 1 Stück Bolognese und Bechamel (stand auf 0),
+  Butter Chicken 4 Stück Naan. Am Lebensmittel Naan gelten die Werte jetzt je 2 Stück.
 
 ## Vor dem Bauen pruefen
 
