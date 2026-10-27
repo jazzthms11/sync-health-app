@@ -163,8 +163,29 @@ Nichts. Entschieden am 24.10.2026:
   Zeilen, die mit `- ` beginnen.
 - `Essen tracken` im Test-Template von `NotePatcherTest` ist veraltet, im Vault gibt es
   das Feld nicht.
-- Unterrezepte (ein Lebensmittel, das auf ein Rezept zeigt, z. B. "Bolognese
-  vegetarisch") haben in Tandoor keine Grammzahl und erscheinen mit ⚠.
+- Unterrezepte werden seit dem 27.10.2026 aufgeklappt, siehe unten.
+
+## Unterrezepte
+
+Ergaenzt am 27.10.2026. "Pilzgulasch mit Kartoffelknödeln" besteht in Tandoor nur aus
+zwei Zeilen, "1 Stück Pilzgulasch" und "1 Stück Kartoffelknödel", die jeweils auf ein
+eigenes Rezept zeigen. Die App zeigte deshalb "0,33 Stück Kartoffelknödel" statt der
+Zutaten.
+
+- **Verlinkte Rezepte werden aufgeklappt** (`tandoor/SubRecipes.kt`): Die App laedt sie
+  nach, bis zu drei Ebenen tief, und setzt ihre Zutaten an die Stelle der Zeile. Gleiche
+  Zutaten (Kartoffel aus Gulasch und Knoedeln) stehen zusammengefasst da.
+- **Wie viel vom Unterrezept gemeint ist**, sagt die Einheit der Zeile: `Stück` heisst
+  das ganze Rezept (so rechnet Tandoor selbst), Portionen (`Portion`, `Personen` oder der
+  `servings_text` des Unterrezepts) teilen durch dessen Portionen, Gramm durch sein
+  Gewicht. Laesst sich nichts zuordnen, bleibt die Zeile wie bisher stehen.
+- **Ein Schritt mit eingebundenem Rezept** (`step_recipe`) zaehlt das Unterrezept einmal
+  ganz, so wie Tandoor es anzeigt.
+- **Gerechnet wird aus den Zutaten des Unterrezepts**, nicht aus den Naehrwerten am
+  verlinkten Lebensmittel. Die sind eine Momentaufnahme: Am 27.10.2026 stand
+  Kartoffelknödel dort mit 1704 kcal, das Rezept selbst ergibt 1334 kcal.
+- Laesst sich ein Unterrezept nicht abrufen, gibt der Tag keine Summe heraus, wie bei
+  jedem anderen Rezept.
 
 ## Vor dem Bauen pruefen
 

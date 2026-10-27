@@ -271,4 +271,35 @@ class TandoorJsonTest {
             TandoorJson.mealPlan("<html>Login</html>")
         }
     }
+
+    /** So steht "Pilzgulasch mit Kartoffelknödeln" in Tandoor, gekuerzt auf eine Zeile. */
+    @Test
+    fun `ein Lebensmittel mit Rezept und ein Schritt-Rezept werden erkannt`() {
+        val verlinkt = """
+            {
+              "id": 93, "name": "Pilzgulasch mit Kartoffelknödeln", "servings": 3, "servings_text": "Personen",
+              "steps": [
+                { "step_recipe": null, "ingredients": [
+                  { "food": { "id": 633, "name": "Kartoffelknödel",
+                              "recipe": { "id": 92, "name": "Kartoffelknödel", "url": "recipe/92" } },
+                    "unit": { "name": "Stück" }, "amount": 1.0,
+                    "conversions": [ { "unit": "Stück", "amount": 1.0 } ] }
+                ] },
+                { "step_recipe": 91, "ingredients": [] }
+              ],
+              "food_properties": {}
+            }
+        """.trimIndent()
+
+        val parsed = TandoorJson.recipe(verlinkt, fdcByType)
+
+        assertEquals("Personen", parsed.servingsText)
+        assertEquals(listOf(91), parsed.stepRecipes)
+        val knoedel = parsed.foods.single()
+        assertEquals(92, knoedel.recipeId)
+        assertEquals("Stück", knoedel.unit)
+        assertNull(rezeptOhneVerweis().foods.first().recipeId)
+    }
+
+    private fun rezeptOhneVerweis() = TandoorJson.recipe(rezept, fdcByType)
 }

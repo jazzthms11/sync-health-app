@@ -31,6 +31,10 @@ data class Recipe(
     val name: String,
     val servings: Double,
     val foods: List<RecipeFood>,
+    /** Wie Tandoor die Portionen nennt, etwa `Personen`. Leer, wenn nichts gepflegt ist. */
+    val servingsText: String = "",
+    /** Rezepte, die ein ganzer Schritt einbindet (`step_recipe`), siehe [SubRecipes]. */
+    val stepRecipes: List<Int> = emptyList(),
 )
 
 /**
@@ -50,6 +54,11 @@ data class RecipeFood(
     val amount: Double?,
     val nutrition: MealNutrition?,
     val unit: String = "g",
+    /**
+     * Das Rezept, auf das das Lebensmittel in Tandoor zeigt, etwa `Kartoffelknödel`.
+     * [SubRecipes] setzt an seiner Stelle die Zutaten dieses Rezepts ein.
+     */
+    val recipeId: Int? = null,
 )
 
 /**
@@ -85,6 +94,8 @@ object TandoorJson {
             servings = root.double("servings")
                 ?: throw MalformedException("Rezept ohne servings"),
             foods = foods(root, foodValues(root.get("food_properties"), fdcByType)),
+            servingsText = root.string("servings_text").orEmpty(),
+            stepRecipes = stepRecipes(root),
         )
     }
 
@@ -180,7 +191,7 @@ object TandoorJson {
      * der Notiz nur Rauschen.
      */
     private fun foods(root: JsonObject, values: Map<Int, Map<Int, Double?>>): List<RecipeFood> {
-        class Acc(val name: String) {
+        class Acc(val name: String, val recipeId: Int?) {
             var grams = 0.0
             var allGrams = true
             val byUnit = linkedMapOf<String?, Double>()
@@ -195,7 +206,10 @@ object TandoorJson {
                 if (ingredient.bool("is_header")) continue
                 val food = ingredient.get("food")?.takeIf { it.isJsonObject }?.asJsonObject ?: continue
                 val foodId = food.int("id") ?: continue
-                val acc = byFood.getOrPut(foodId) { Acc(food.string("name").orEmpty()) }
+                val acc = byFood.getOrPut(foodId) {
+                    val linked = food.get("recipe")?.takeIf { it.isJsonObject }?.asJsonObject?.int("id")
+                    Acc(food.string("name").orEmpty(), linked)
+                }
 
                 val amount = ingredient.double("amount") ?: 0.0
                 if (amount == 0.0 || ingredient.bool("no_amount")) continue
@@ -210,13 +224,20 @@ object TandoorJson {
             val nutrition = nutrition(values[foodId])
             val only = acc.byUnit.keys.singleOrNull()
             when {
-                acc.allGrams -> RecipeFood(acc.name, acc.grams, nutrition)
+                acc.allGrams -> RecipeFood(acc.name, acc.grams, nutrition, recipeId = acc.recipeId)
                 // Keine Grammzahl, aber eine einzige Einheit: so rechnen, wie Tandoor rechnet.
-                only != null -> RecipeFood(acc.name, acc.byUnit.getValue(only), nutrition, only)
-                else -> RecipeFood(acc.name, null, nutrition)
+                only != null -> RecipeFood(acc.name, acc.byUnit.getValue(only), nutrition, only, acc.recipeId)
+                else -> RecipeFood(acc.name, null, nutrition, recipeId = acc.recipeId)
             }
         }
     }
+
+    /** Die Rezepte, die ein Schritt als Ganzes einbindet, in Schrittreihenfolge. */
+    private fun stepRecipes(root: JsonObject): List<Int> =
+        root.get("steps")?.takeIf { it.isJsonArray }?.asJsonArray
+            ?.filter { it.isJsonObject }
+            ?.mapNotNull { it.asJsonObject.int("step_recipe") }
+            .orEmpty()
 
     /**
      * Die Menge einer Zutatenzeile in Gramm, oder `null`, wenn Tandoor sie nicht kennt.

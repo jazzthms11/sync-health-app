@@ -45,15 +45,23 @@ class TandoorSource(
                 is TandoorClient.Result.Found -> result.value
                 else -> return Outcome.Unavailable("Naehrwerttypen: ${result.describe()}")
             }
-            for (id in needed) {
-                when (val result = client.recipe(id, fdcByType)) {
-                    is TandoorClient.Result.Found -> recipes[id] = result.value
-                    else -> return Outcome.Unavailable("Rezept $id: ${result.describe()}")
+            // Erst die geplanten Rezepte, dann Ebene fuer Ebene die verlinkten, siehe
+            // [SubRecipes]. Ein Rezept, das auf sich selbst zurueckzeigt, ist dann schon da
+            // und wird nicht noch einmal geholt.
+            var wave = needed
+            repeat(MAX_DEPTH + 1) {
+                for (id in wave) {
+                    when (val result = client.recipe(id, fdcByType)) {
+                        is TandoorClient.Result.Found -> recipes[id] = result.value
+                        else -> return Outcome.Unavailable("Rezept $id: ${result.describe()}")
+                    }
                 }
+                wave = wave.flatMap { SubRecipes.linked(recipes.getValue(it)) }.toSet() - recipes.keys
             }
         }
 
-        return when (val result = MealPlanMath.meals(date, marker, householdEaters, entries, recipes)) {
+        val flat = needed.associateWith { SubRecipes.flatten(recipes.getValue(it), recipes) }
+        return when (val result = MealPlanMath.meals(date, marker, householdEaters, entries, flat)) {
             is MealPlanMath.Result.Ready -> Outcome.Ready(result.meals)
             is MealPlanMath.Result.Incomplete -> Outcome.Unavailable(result.reasons.joinToString("; "))
         }
@@ -85,6 +93,12 @@ class TandoorSource(
          * Reichweite haengt damit an der Plandisziplin und nicht am Code.
          */
         const val REACH = 3L
+
+        /**
+         * Wie tief verlinkte Rezepte nachgeladen werden. Tiefer verschachtelte bleiben als
+         * einzelnes Lebensmittel stehen, siehe [SubRecipes.flatten].
+         */
+        const val MAX_DEPTH = 3
     }
 }
 

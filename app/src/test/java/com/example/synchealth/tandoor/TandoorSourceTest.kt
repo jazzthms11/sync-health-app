@@ -221,4 +221,39 @@ class TandoorSourceTest {
             server.takeRequest().path,
         )
     }
+
+    /**
+     * Wie das Pilzgulasch: Das geplante Rezept besteht nur aus einer Zeile, die auf ein
+     * anderes Rezept zeigt. Dessen Zutaten muessen im Gericht stehen.
+     */
+    @Test
+    fun `ein verlinktes Rezept wird nachgeladen und aufgeklappt`() {
+        server.enqueue(plan(entry(1, 7, "@leo")))
+        server.enqueue(typen())
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {
+                  "id": 7, "name": "R7", "servings": 2,
+                  "steps": [ { "ingredients": [
+                    { "food": { "id": 50, "name": "Knödel", "recipe": { "id": 8 } },
+                      "unit": { "name": "Stück" }, "amount": 1, "conversions": [] }
+                  ] } ],
+                  "food_properties": {}
+                }
+                """.trimIndent()
+            )
+        )
+        server.enqueue(recipe(8, 1000.0))
+
+        val outcome = source.read(heute) as TandoorSource.Outcome.Ready
+
+        assertEquals("/api/recipe/8/", server.run { takeRequest(); takeRequest(); takeRequest(); takeRequest().path })
+        val meal = outcome.meals.single()
+        assertEquals("R7", meal.recipeName)
+        // Ein ganzes R8 (200 g, 1000 kcal) steckt in R7 fuer zwei Portionen, eine davon ist meine.
+        assertEquals(100.0, meal.ingredients.single().amount!!, 1e-9)
+        assertEquals("Zutat8", meal.ingredients.single().name)
+        assertEquals(500.0, calories(outcome), 1e-9)
+    }
 }
