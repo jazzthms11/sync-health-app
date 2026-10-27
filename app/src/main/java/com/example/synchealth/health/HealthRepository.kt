@@ -38,8 +38,15 @@ class HealthRepository(private val context: Context) {
         Permission.of(DataTypes.WATER_INTAKE, AccessType.READ),
     )
 
-    suspend fun requestPermissions(activity: Activity): Set<Permission> =
-        store.requestPermissionsAsync(permissions, activity).await()
+    /**
+     * Fragt nur, wenn noch etwas fehlt. Samsung zeigt seinen Dialog sonst bei jedem Start,
+     * auch wenn laengst alles erteilt ist.
+     */
+    suspend fun requestPermissions(activity: Activity): Set<Permission> {
+        val granted = store.getGrantedPermissionsAsync(permissions).await()
+        if (granted.containsAll(permissions)) return granted
+        return store.requestPermissionsAsync(permissions, activity).await()
+    }
 
     suspend fun read(date: LocalDate): HealthReport {
         val filter = LocalTimeFilter.of(date.atStartOfDay(), date.atTime(23, 59, 59))
