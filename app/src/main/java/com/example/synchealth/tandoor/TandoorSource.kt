@@ -1,5 +1,6 @@
 package com.example.synchealth.tandoor
 
+import com.example.synchealth.essen.PlannedMeal
 import java.time.LocalDate
 
 /**
@@ -21,12 +22,12 @@ class TandoorSource(
 ) {
 
     sealed interface Outcome {
-        data class Ready(val nutrition: MealNutrition) : Outcome
+        data class Ready(val meals: List<PlannedMeal>) : Outcome
 
         /**
-         * Keine belastbare Summe. Die fuenf geteilten Felder bleiben dann ungeschrieben,
-         * denn Samsung Health allein waere die halbe Mahlzeit, und eine zu niedrige Zahl
-         * faellt in der Tagesnotiz nie wieder auf.
+         * Kein belastbarer Plan. Was dann geschrieben wird, entscheidet
+         * [com.example.synchealth.essen.MealMerge]: Steht der Tag schon in der Notiz,
+         * gilt der Stand dort, sonst bleiben die fuenf geteilten Felder leer.
          */
         data class Unavailable(val reason: String) : Outcome
     }
@@ -44,17 +45,25 @@ class TandoorSource(
                 is TandoorClient.Result.Found -> result.value
                 else -> return Outcome.Unavailable("Naehrwerttypen: ${result.describe()}")
             }
-            for (id in needed) {
-                when (val result = client.recipe(id, fdcByType)) {
-                    is TandoorClient.Result.Found -> recipes[id] = result.value
-                    else -> return Outcome.Unavailable("Rezept $id: ${result.describe()}")
+            // Erst die geplanten Rezepte, dann Ebene fuer Ebene die verlinkten, siehe
+            // [SubRecipes]. Ein Rezept, das auf sich selbst zurueckzeigt, ist dann schon da
+            // und wird nicht noch einmal geholt.
+            var wave = needed
+            repeat(MAX_DEPTH + 1) {
+                for (id in wave) {
+                    when (val result = client.recipe(id, fdcByType)) {
+                        is TandoorClient.Result.Found -> recipes[id] = result.value
+                        else -> return Outcome.Unavailable("Rezept $id: ${result.describe()}")
+                    }
                 }
+                wave = wave.flatMap { SubRecipes.linked(recipes.getValue(it)) }.toSet() - recipes.keys
             }
         }
 
-        return when (val sum = MealPlanMath.sum(date, marker, householdEaters, entries, recipes)) {
-            is MealPlanMath.Result.Ready -> Outcome.Ready(sum.nutrition)
-            is MealPlanMath.Result.Incomplete -> Outcome.Unavailable(sum.reasons.joinToString("; "))
+        val flat = needed.associateWith { SubRecipes.flatten(recipes.getValue(it), recipes) }
+        return when (val result = MealPlanMath.meals(date, marker, householdEaters, entries, flat)) {
+            is MealPlanMath.Result.Ready -> Outcome.Ready(result.meals)
+            is MealPlanMath.Result.Incomplete -> Outcome.Unavailable(result.reasons.joinToString("; "))
         }
     }
 
@@ -84,6 +93,12 @@ class TandoorSource(
          * Reichweite haengt damit an der Plandisziplin und nicht am Code.
          */
         const val REACH = 3L
+
+        /**
+         * Wie tief verlinkte Rezepte nachgeladen werden. Tiefer verschachtelte bleiben als
+         * einzelnes Lebensmittel stehen, siehe [SubRecipes.flatten].
+         */
+        const val MAX_DEPTH = 3
     }
 }
 

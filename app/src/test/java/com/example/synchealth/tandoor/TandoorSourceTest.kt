@@ -50,22 +50,30 @@ class TandoorSourceTest {
         }
     """.trimIndent()
 
+    /** Ein Rezept fuer zwei Portionen aus 200 g einer einzigen Zutat. */
     private fun recipe(id: Int, calories: Double) = MockResponse().setBody(
         """
         {
           "id": $id,
           "name": "R$id",
           "servings": 2,
+          "steps": [ { "ingredients": [
+            { "food": { "id": 1, "name": "Zutat$id" }, "unit": { "name": "g", "base_unit": "g" },
+              "amount": 200, "conversions": [ { "unit": "g", "amount": 200 } ] }
+          ] } ],
           "food_properties": {
-            "1": { "id": 1, "name": "Kalorien", "total_value": $calories, "missing_value": false },
-            "2": { "id": 2, "name": "Proteine", "total_value": 60, "missing_value": false },
-            "3": { "id": 3, "name": "Fett", "total_value": 40, "missing_value": false },
-            "4": { "id": 4, "name": "Ballaststoffe", "total_value": 20, "missing_value": false },
-            "5": { "id": 5, "name": "Zucker", "total_value": 10, "missing_value": false }
+            "1": { "id": 1, "food_values": { "1": { "id": 1, "value": $calories } } },
+            "2": { "id": 2, "food_values": { "1": { "id": 1, "value": 60 } } },
+            "3": { "id": 3, "food_values": { "1": { "id": 1, "value": 40 } } },
+            "4": { "id": 4, "food_values": { "1": { "id": 1, "value": 20 } } },
+            "5": { "id": 5, "food_values": { "1": { "id": 1, "value": 10 } } }
           }
         }
         """.trimIndent()
     )
+
+    private fun calories(outcome: TandoorSource.Outcome.Ready) =
+        outcome.meals.sumOf { it.nutrition.calories }
 
     /** Die Tabelle, ohne die sich `food_properties` nicht deuten laesst. */
     private fun typen() = MockResponse().setBody(
@@ -84,7 +92,7 @@ class TandoorSourceTest {
     )
 
     @Test
-    fun `Mittag und Abend werden zu einer Summe`() {
+    fun `Mittag und Abend kommen als zwei Gerichte`() {
         server.enqueue(plan(entry(1, 7, "@leo"), entry(2, 8, "@leo @jazz", servings = 2.0)))
         server.enqueue(typen())
         server.enqueue(recipe(7, 1000.0))
@@ -93,7 +101,9 @@ class TandoorSourceTest {
         val outcome = source.read(heute) as TandoorSource.Outcome.Ready
 
         // 1000/2 fuer eine Portion, dazu 1600 * (2/1/2) / 2 fuer die eigene Haelfte.
-        assertEquals(1300.0, outcome.nutrition.calories, 1e-9)
+        assertEquals(listOf(1, 2), outcome.meals.map { it.entryId })
+        assertEquals(1300.0, calories(outcome), 1e-9)
+        assertEquals(100.0, outcome.meals.first().ingredients.single().amount!!, 1e-9)
     }
 
     /** Ein Abendessen, das jemand anderes isst, darf keine Anfrage kosten. */
@@ -120,7 +130,7 @@ class TandoorSourceTest {
         val outcome = source.read(heute) as TandoorSource.Outcome.Ready
 
         assertEquals(3, server.requestCount)
-        assertEquals(1000.0, outcome.nutrition.calories, 1e-9)
+        assertEquals(1000.0, calories(outcome), 1e-9)
     }
 
     @Test
@@ -130,7 +140,7 @@ class TandoorSourceTest {
         val outcome = source.read(heute) as TandoorSource.Outcome.Ready
 
         assertEquals(1, server.requestCount)
-        assertEquals(MealNutrition.NOTHING, outcome.nutrition)
+        assertEquals(emptyList<Any>(), outcome.meals)
     }
 
     /**
@@ -184,7 +194,7 @@ class TandoorSourceTest {
         val outcome = source.read(heute) as TandoorSource.Outcome.Ready
 
         // 4 Portionen / 1 Tag / 2 Esser = 2, davon 1000 kcal / 2 Rezeptportionen = 1000.
-        assertEquals(1000.0, outcome.nutrition.calories, 1e-9)
+        assertEquals(1000.0, calories(outcome), 1e-9)
     }
 
     @Test
@@ -210,5 +220,40 @@ class TandoorSourceTest {
             "/api/meal-plan/?from_date=2026-09-28&to_date=2026-10-01",
             server.takeRequest().path,
         )
+    }
+
+    /**
+     * Wie das Pilzgulasch: Das geplante Rezept besteht nur aus einer Zeile, die auf ein
+     * anderes Rezept zeigt. Dessen Zutaten muessen im Gericht stehen.
+     */
+    @Test
+    fun `ein verlinktes Rezept wird nachgeladen und aufgeklappt`() {
+        server.enqueue(plan(entry(1, 7, "@leo")))
+        server.enqueue(typen())
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {
+                  "id": 7, "name": "R7", "servings": 2,
+                  "steps": [ { "ingredients": [
+                    { "food": { "id": 50, "name": "Knödel", "recipe": { "id": 8 } },
+                      "unit": { "name": "Stück" }, "amount": 1, "conversions": [] }
+                  ] } ],
+                  "food_properties": {}
+                }
+                """.trimIndent()
+            )
+        )
+        server.enqueue(recipe(8, 1000.0))
+
+        val outcome = source.read(heute) as TandoorSource.Outcome.Ready
+
+        assertEquals("/api/recipe/8/", server.run { takeRequest(); takeRequest(); takeRequest(); takeRequest().path })
+        val meal = outcome.meals.single()
+        assertEquals("R7", meal.recipeName)
+        // Ein ganzes R8 (200 g, 1000 kcal) steckt in R7 fuer zwei Portionen, eine davon ist meine.
+        assertEquals(100.0, meal.ingredients.single().amount!!, 1e-9)
+        assertEquals("Zutat8", meal.ingredients.single().name)
+        assertEquals(500.0, calories(outcome), 1e-9)
     }
 }

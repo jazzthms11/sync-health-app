@@ -1,10 +1,14 @@
 package com.example.synchealth.tandoor
 
+import com.example.synchealth.essen.Ingredient
+import com.example.synchealth.essen.PlannedMeal
+import com.example.synchealth.essen.Slot
+import com.example.synchealth.essen.roundAmount
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 /**
- * Die ganze Rechnung vom Wochenplan zu den fuenf Naehrwerten eines Tages.
+ * Die ganze Rechnung vom Wochenplan zu den Gerichten und Zutaten eines Tages.
  *
  * Arbeitet nur auf den Datenklassen aus [TandoorJson]: kein Netz, kein Android, keine
  * Uhr. Dieselbe Trennung wie zwischen [com.example.synchealth.vault.NotePatcher] und
@@ -15,12 +19,15 @@ import java.time.temporal.ChronoUnit
 object MealPlanMath {
 
     sealed interface Result {
-        data class Ready(val nutrition: MealNutrition) : Result
+        data class Ready(val meals: List<PlannedMeal>) : Result
 
         /**
-         * Die Summe waere nachweislich zu niedrig. Sie wird nicht herausgegeben, sonst
-         * stuende eine falsche Zahl in der Tagesnotiz, und eine falsche Zahl faellt dort
-         * nie wieder auf.
+         * Ein Eintrag laesst sich nicht zuordnen. Das Ergebnis waere nachweislich zu
+         * niedrig und wird nicht herausgegeben, denn eine falsche Zahl faellt in der
+         * Tagesnotiz nie wieder auf.
+         *
+         * Eine einzelne Zutat ohne Naehrwerte gehoert nicht hierher: Sie wird an der
+         * Zutat selbst markiert, siehe [Ingredient.warning].
          */
         data class Incomplete(val reasons: List<String>) : Result
     }
@@ -40,7 +47,7 @@ object MealPlanMath {
      * Marke ist also ein unvollstaendiger Planeintrag und keine geteilte Mahlzeit.
      *
      * Verglichen wird der Name aus Tandoor. Wird die Mahlzeitenart dort umbenannt, faellt
-     * der Eintrag in den lauten Fall: [sum] gibt dann keine Summe heraus, statt still mit
+     * der Eintrag in den lauten Fall: [meals] gibt dann kein Ergebnis heraus, statt still mit
      * dem falschen Teiler zu rechnen.
      */
     fun shared(entry: MealPlanEntry): Boolean = entry.mealType.equals(SHARED, ignoreCase = true)
@@ -80,19 +87,20 @@ object MealPlanMath {
     }
 
     /**
-     * Summiert, was [marker] an [date] laut Plan isst.
+     * Die Gerichte, die [marker] an [date] laut Plan isst, mit den Zutaten in Gramm auf
+     * den eigenen Anteil umgerechnet.
      *
      * [recipes] muss jedes Rezept enthalten, auf das ein Eintrag zeigt; wer die Rezepte
      * holt, entscheidet [TandoorSource].
      */
-    fun sum(
+    fun meals(
         date: LocalDate,
         marker: String,
         householdEaters: Int,
         entries: List<MealPlanEntry>,
         recipes: Map<Int, Recipe>,
     ): Result {
-        var total = MealNutrition.NOTHING
+        val meals = mutableListOf<PlannedMeal>()
         val reasons = mutableListOf<String>()
 
         for (entry in onDate(entries, date)) {
@@ -116,54 +124,34 @@ object MealPlanMath {
                 reasons += "Rezept ${entry.recipeName} nicht abrufbar"
                 continue
             }
-            when (val portion = portion(recipe, share)) {
-                is Portion.Ok -> total += portion.nutrition
-                is Portion.Incomplete -> reasons += portion.reasons
+            if (recipe.servings <= 0.0) {
+                reasons += "${recipe.name} steht auf ${recipe.servings} Portionen"
+                continue
             }
+            meals += PlannedMeal(
+                entryId = entry.id,
+                recipeId = recipe.id,
+                recipeName = recipe.name,
+                slot = Slot.ofTandoor(entry.mealType),
+                ingredients = recipe.foods.map { portion(it, share / recipe.servings) },
+            )
         }
 
-        return if (reasons.isEmpty()) Result.Ready(total) else Result.Incomplete(reasons)
-    }
-
-    private sealed interface Portion {
-        data class Ok(val nutrition: MealNutrition) : Portion
-        data class Incomplete(val reasons: List<String>) : Portion
+        return if (reasons.isEmpty()) Result.Ready(meals) else Result.Incomplete(reasons)
     }
 
     /**
-     * `total_value * Anteil / rezept.servings` je Naehrwert: Der Wert gilt fuer das ganze
-     * Rezept in seiner hinterlegten Portionszahl, nicht je Portion.
+     * Ein Lebensmittel auf den eigenen Anteil gebracht. [fraction] ist der Anteil am
+     * ganzen Rezept, also `Anteil in Portionen / Rezeptportionen`.
+     *
+     * Die Naehrwerte gehen als Wert je Einheit weiter: `Beitrag zum Rezept / Menge im
+     * Rezept`. So laesst sich jede angepasste Menge nachrechnen, ohne Tandoor zu fragen.
      */
-    private fun portion(recipe: Recipe, share: Double): Portion {
-        if (recipe.servings <= 0.0) {
-            return Portion.Incomplete(listOf("${recipe.name} steht auf ${recipe.servings} Portionen"))
-        }
-        val byFdc = recipe.properties.filter { it.fdcId != null }.associateBy { it.fdcId }
-        val reasons = mutableListOf<String>()
-
-        // Eine fehlende und eine unvollstaendige Eigenschaft heissen dasselbe: Die Zahl
-        // waere zu niedrig, und man sieht es ihr nicht an. Beide halten den Lauf an.
-        fun value(fdcId: Int, name: String): Double {
-            val property = byFdc[fdcId]
-            if (property == null) {
-                reasons += "${recipe.name} fuehrt $name nicht"
-                return 0.0
-            }
-            if (property.missing) {
-                reasons += "${recipe.name}: $name ist unvollstaendig"
-                return 0.0
-            }
-            return property.totalValue * share / recipe.servings
-        }
-
-        val nutrition = MealNutrition(
-            calories = value(MealNutrition.FDC_CALORIES, "Kalorien"),
-            protein = value(MealNutrition.FDC_PROTEIN, "Protein"),
-            fat = value(MealNutrition.FDC_FAT, "Fett"),
-            fiber = value(MealNutrition.FDC_FIBER, "Ballaststoffe"),
-            sugar = value(MealNutrition.FDC_SUGAR, "Zucker"),
-        )
-        return if (reasons.isEmpty()) Portion.Ok(nutrition) else Portion.Incomplete(reasons)
+    private fun portion(food: RecipeFood, fraction: Double): Ingredient {
+        val amount = food.amount?.takeIf { it > 0.0 }
+        val mine = amount?.let { roundAmount(it * fraction, food.unit) }
+        val perUnit = if (amount == null) null else food.nutrition?.times(1.0 / amount)
+        return Ingredient(food.name, mine, mine, perUnit, food.unit)
     }
 
     /** Marken sind Namen: `@leo`, `@jazz`. Umlaute gehoeren dazu, Satzzeichen nicht. */
