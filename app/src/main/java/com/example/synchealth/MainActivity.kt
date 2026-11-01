@@ -6,17 +6,19 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
@@ -33,7 +35,16 @@ import com.example.synchealth.settings.CredentialStore
 import com.example.synchealth.settings.SettingsDialog
 import com.example.synchealth.tandoor.TandoorClient
 import com.example.synchealth.tandoor.TandoorSource
+import com.example.synchealth.ui.KartenKopf
+import com.example.synchealth.ui.MengenFeld
+import com.example.synchealth.ui.MesswertZeile
+import com.example.synchealth.ui.Pille
+import com.example.synchealth.ui.Radius
+import com.example.synchealth.ui.VaultKarte
+import com.example.synchealth.ui.theme.LocalVault
+import com.example.synchealth.ui.theme.Lucide
 import com.example.synchealth.ui.theme.SyncHealthTheme
+import com.example.synchealth.ui.theme.Zahl
 import com.example.synchealth.vault.DailyNoteSync
 import com.example.synchealth.vault.WebDavClient
 import kotlinx.coroutines.CancellationException
@@ -44,9 +55,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 private const val TAG = "SyncHealth"
+
+/** Wie lange ein Tag angezeigt bleiben muss, bevor er geladen wird, siehe changeDate. */
+private const val LOAD_DELAY_MS = 700L
 
 class MainActivity : ComponentActivity() {
 
@@ -89,7 +104,7 @@ class MainActivity : ComponentActivity() {
     /** Nur der Sync, der in die Notiz schreibt. Solange er laeuft, bleibt der Tag fest. */
     private var isSyncing by mutableStateOf(false)
 
-    /** Ein Tag wird gelesen. Das Datum bleibt dabei frei, siehe [changeDate]. */
+    /** Ein Tag wird gelesen. Die Pfeile bleiben dabei frei, siehe [changeDate]. */
     private var isLoading by mutableStateOf(false)
 
     /** Das Laden des angezeigten Tags, wartend oder laufend. Ein neuer Tag bricht es ab. */
@@ -146,9 +161,10 @@ class MainActivity : ComponentActivity() {
      * Nur lesen, nicht schreiben. Das Oeffnen der App und das Umstellen des Datums fassen
      * die Tagesnotiz bewusst nicht an, geschrieben wird auf Knopfdruck.
      *
-     * Mit [wait] beginnt das Lesen erst, wenn der Tag so lange angezeigt bleibt. Jeder
-     * Aufruf bricht das vorige Laden ab, und ein Ergebnis fuer einen anderen Tag als den
-     * angezeigten wird verworfen.
+     * Mit [wait] beginnt das Lesen erst, wenn der Tag so lange angezeigt bleibt. Wer
+     * schnell durch die Tage tippt, loest so nur fuer den Tag eine Abfrage aus, auf dem er
+     * stehen bleibt. Jeder Aufruf bricht das vorige Laden ab, und ein Ergebnis fuer einen
+     * anderen Tag als den angezeigten wird verworfen.
      */
     private fun loadHealthData(wait: Long = 0L) {
         val repo = health ?: return
@@ -337,10 +353,13 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * Einen Tag vor oder zurueck. In die Zukunft gibt es nichts zu holen.
+     *
      * Die Werte des vorigen Tags verschwinden sofort, damit unter dem neuen Datum nie die
-     * Zahlen eines anderen Tags stehen. Offene Aenderungen gelten nur fuer ihren Tag.
+     * Zahlen eines anderen Tags stehen. Geladen wird erst nach [LOAD_DELAY_MS], oder sofort
+     * mit dem Sync-Knopf. Offene Aenderungen gelten nur fuer ihren Tag.
      */
-    private fun changeDate(date: LocalDate, wait: Long = 0L) {
+    private fun changeDate(date: LocalDate, wait: Long = LOAD_DELAY_MS) {
         if (date.isAfter(LocalDate.now()) || date == selectedDate) return
         selectedDate = date
         clearEdits()
@@ -353,74 +372,31 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun HealthStatusScreen(modifier: Modifier = Modifier) {
-        Box(modifier = modifier.fillMaxSize()) {
+        val v = LocalVault.current
+        Box(modifier = modifier.fillMaxSize().background(v.bg)) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text(
-                    text = "Datum: $selectedDate",
-                    fontSize = 18.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                if (health != null && inputs == null && !isSyncing) {
-                    Text(if (isLoading) "Lädt …" else "Gleich …", fontSize = 13.sp)
-                }
-                Button(onClick = { showDatePicker() }, enabled = !isSyncing) { Text("Datum ändern") }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Messwert("Schritte", healthReport.steps?.toString())
-                Messwert("Kalorien", zahl(healthReport.calories, 0), "kcal")
-                Messwert("Wasser", zahl(healthReport.water?.div(1000.0), 2), "l")
-                Messwert("Schlaf", zahl(healthReport.sleep, 2), "h")
-                Messwert("Protein", zahl(healthReport.protein, 1), "g")
-                Messwert("Zucker", zahl(healthReport.sugar, 1), "g")
-                Messwert("Fett", zahl(healthReport.fat, 1), "g")
-                Messwert("Ballaststoffe", zahl(healthReport.fiber, 1), "g")
-                if (hasScreenTimeAccess) {
-                    Messwert("Bildschirmzeit", zahl(healthReport.screenTime, 1), "h")
-                } else {
-                    TextButton(onClick = { startActivity(screenTime.requestAccessIntent()) }) {
-                        Text("Bildschirmzeit-Zugriff erlauben")
-                    }
-                }
-
-                if (hinweise.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    hinweise.forEach {
-                        Text(
-                            text = it,
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                Button(onClick = { startSync() }, enabled = !isSyncing) {
-                    Text(
-                        when {
-                            isSyncing -> "Läuft für $selectedDate..."
-                            !edits.isEmpty -> "Speichern und Sync $selectedDate"
-                            else -> "Sync $selectedDate"
-                        },
-                    )
-                }
-                if (!edits.isEmpty && !isSyncing) {
-                    Text("Ungespeicherte Änderungen", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
-                }
-
+                Kopf()
+                Karten()
+                Hinweise()
+                SyncKnopf()
                 Mahlzeiten()
 
-                TextButton(onClick = { showSettings = true }, enabled = !isSyncing) {
-                    Text("Zugänge")
+                TextButton(
+                    onClick = { showSettings = true },
+                    enabled = !isSyncing,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                ) {
+                    Icon(Lucide.Settings, contentDescription = null, tint = v.leise, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Zugänge", style = MaterialTheme.typography.bodyMedium, color = v.leise)
                 }
+                Spacer(Modifier.height(24.dp))
             }
 
             SnackbarHost(
@@ -446,105 +422,261 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Wochentag und Datum wie ein Notiztitel, mit Pfeilen fuer den Tag davor und danach. */
     @Composable
-    private fun Messwert(name: String, wert: String?, einheit: String = "") {
-        // Ein Strich statt einer Null: Fuer den Tag liegt nichts vor, und eine 0 waere
-        // dafuer die falsche Anzeige, seit eine echte 0 geschrieben werden kann.
-        val text = if (wert == null) "—" else listOf(wert, einheit).filter { it.isNotEmpty() }
-            .joinToString(" ")
-        Text(text = "$name: $text", fontSize = 22.sp)
+    private fun Kopf() {
+        val v = LocalVault.current
+        val heute = LocalDate.now()
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { changeDate(selectedDate.minusDays(1)) }, enabled = !isSyncing) {
+                Icon(Lucide.ChevronLeft, contentDescription = "Tag davor", tint = v.leise)
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(Radius)
+                    .clickable(enabled = !isSyncing) { showDatePicker() }
+                    .padding(vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                val wochentag = when (selectedDate) {
+                    heute -> "Heute"
+                    heute.minusDays(1) -> "Gestern"
+                    else -> selectedDate.format(DateTimeFormatter.ofPattern("EEEE", Locale.GERMANY))
+                }
+                Text(wochentag.uppercase(), style = MaterialTheme.typography.labelMedium, color = v.akzent)
+                Text(
+                    selectedDate.format(DateTimeFormatter.ofPattern("d. MMMM yyyy", Locale.GERMANY)),
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = v.titel,
+                )
+                // Auch waehrend der Wartezeit: Der Tag ist gewaehlt, seine Werte kommen noch.
+                if (health != null && inputs == null && !isSyncing) {
+                    Text(
+                        if (isLoading) "Lädt …" else "Gleich …",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = v.leise,
+                    )
+                }
+            }
+            IconButton(
+                onClick = { changeDate(selectedDate.plusDays(1)) },
+                enabled = !isSyncing && selectedDate.isBefore(heute),
+            ) {
+                Icon(
+                    Lucide.ChevronRight,
+                    contentDescription = "Tag danach",
+                    tint = if (selectedDate.isBefore(heute)) v.leise else v.linie,
+                )
+            }
+        }
+    }
+
+    /** Die beiden Karten der Tagesuebersicht, mit denselben Feldern und Icons wie im Vault. */
+    @Composable
+    private fun Karten() {
+        val r = healthReport
+        VaultKarte {
+            KartenKopf("Gesundheit", Lucide.HeartPulse)
+            MesswertZeile(Lucide.Footprints, "Schritte", r.steps?.let { deutsch(it.toDouble(), 0) }, "", false)
+            MesswertZeile(Lucide.Moon, "Schlaf", deutsch(r.sleep, 1), "Std.", true)
+            if (hasScreenTimeAccess) {
+                MesswertZeile(Lucide.Smartphone, "Screen Time", deutsch(r.screenTime, 1), "Std.", true)
+            } else {
+                HorizontalDivider(color = LocalVault.current.linie)
+                TextButton(onClick = { startActivity(screenTime.requestAccessIntent()) }) {
+                    Text("Bildschirmzeit-Zugriff erlauben", color = LocalVault.current.akzent)
+                }
+            }
+        }
+        VaultKarte {
+            KartenKopf("Ernährung", Lucide.Utensils)
+            MesswertZeile(Lucide.Flame, "Kalorien", deutsch(r.calories, 0), "kcal", false)
+            MesswertZeile(Lucide.Beef, "Protein", deutsch(r.protein, 1), "g", true)
+            MesswertZeile(Lucide.Droplet, "Fett", deutsch(r.fat, 1), "g", true)
+            MesswertZeile(Lucide.Wheat, "Ballaststoffe", deutsch(r.fiber, 1), "g", true)
+            MesswertZeile(Lucide.Candy, "Zucker", deutsch(r.sugar, 1), "g", true)
+            MesswertZeile(Lucide.GlassWater, "Wasser", deutsch(r.water?.div(1000.0), 2), "L", true)
+        }
+    }
+
+    @Composable
+    private fun Hinweise() {
+        if (hinweise.isEmpty()) return
+        val v = LocalVault.current
+        VaultKarte(flaeche = true) {
+            hinweise.forEach {
+                Row(modifier = Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.Top) {
+                    Icon(
+                        Lucide.TriangleAlert,
+                        contentDescription = null,
+                        tint = v.warnung,
+                        modifier = Modifier.size(15.dp).padding(top = 2.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = v.text)
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun SyncKnopf() {
+        val v = LocalVault.current
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = { startSync() },
+                enabled = !isSyncing,
+                shape = Radius,
+                colors = ButtonDefaults.buttonColors(containerColor = v.akzent, contentColor = v.bg),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Icon(Lucide.RefreshCw, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    when {
+                        isSyncing -> "Läuft …"
+                        !edits.isEmpty -> "Speichern und Sync"
+                        else -> "Sync"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+            if (!edits.isEmpty && !isSyncing) {
+                Text(
+                    "Ungespeicherte Änderungen",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = v.akzent,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        }
     }
 
     /**
-     * Je Mahlzeit eine aufklappbare Zeile mit Gerichten und Zutaten. Gerichte aus Tandoor
-     * lassen sich anpassen, Samsung-Eintraege nur ansehen.
+     * Je Mahlzeit eine aufklappbare Karte, wie die Callouts in der Notiz. Alle vier stehen
+     * immer da, auch leer: So sieht man, was noch fehlt.
      */
     @Composable
     private fun Mahlzeiten() {
-        if (inputs == null) return
-        val planned = meals?.meals.orEmpty()
+        val v = LocalVault.current
+        val meals = meals?.meals.orEmpty()
         val samsung = inputs?.samsungMeals.orEmpty()
 
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("Mahlzeiten", fontSize = 22.sp, modifier = Modifier.fillMaxWidth())
+        Text(
+            "Mahlzeiten",
+            style = MaterialTheme.typography.titleLarge,
+            color = v.titel,
+            modifier = Modifier.padding(top = 8.dp),
+        )
         for (slot in Slot.entries) {
-            val gerichte = planned.filter { it.slot == slot }
-            val eintraege = samsung.filter { it.slot == slot }
-            val leer = gerichte.isEmpty() && eintraege.isEmpty()
-            val summe = gerichte.sumOf { it.nutrition.calories } + eintraege.sumOf { it.calories ?: 0.0 }
+            val planned = meals.filter { it.slot == slot }
+            val fromSamsung = samsung.filter { it.slot == slot }
             val auf = slot in offen
+            val summe = planned.sumOf { it.nutrition.calories } + fromSamsung.sumOf { it.calories ?: 0.0 }
+            val leer = planned.isEmpty() && fromSamsung.isEmpty()
 
-            HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = !leer) { offen = if (auf) offen - slot else offen + slot }
-                    .padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    (if (leer) "  " else if (auf) "▾ " else "▸ ") + slot.label,
-                    fontSize = 18.sp,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(if (leer) "—" else kcal(summe), fontSize = 18.sp)
-            }
-            if (auf) {
-                gerichte.forEach { Gericht(it) }
-                eintraege.forEach { Eintrag(it) }
+            VaultKarte(flaeche = true) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(Radius)
+                        .clickable { offen = if (auf) offen - slot else offen + slot }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(slotIcon(slot), contentDescription = null, tint = v.akzent, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text(slot.label, style = MaterialTheme.typography.titleMedium, color = v.text, modifier = Modifier.weight(1f))
+                    Text(
+                        if (leer) "—" else "${deutsch(summe, 0)} kcal",
+                        style = Zahl.copy(fontSize = 15.sp),
+                        color = if (leer) v.leise else v.text,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        Lucide.ChevronDown,
+                        contentDescription = if (auf) "Zuklappen" else "Aufklappen",
+                        tint = v.leise,
+                        modifier = Modifier.size(18.dp).rotate(if (auf) 180f else 0f),
+                    )
+                }
+                AnimatedVisibility(visible = auf) {
+                    Column {
+                        planned.forEach { Gericht(it) }
+                        fromSamsung.forEach { Eintrag(it) }
+                        if (leer) {
+                            HorizontalDivider(color = v.linie, modifier = Modifier.padding(vertical = 6.dp))
+                            Text("Nichts eingetragen", style = MaterialTheme.typography.bodyMedium, color = v.leise)
+                        }
+                    }
+                }
             }
         }
-        HorizontalDivider(modifier = Modifier.padding(top = 8.dp, bottom = 16.dp))
+    }
+
+    private fun slotIcon(slot: Slot) = when (slot) {
+        Slot.FRUEHSTUECK -> Lucide.Sunrise
+        Slot.MITTAG -> Lucide.Sun
+        Slot.ABEND -> Lucide.MoonStar
+        Slot.SNACKS -> Lucide.Cookie
     }
 
     /** Ein Eintrag aus Samsung Health, nur zum Ansehen: Geaendert wird er dort. */
     @Composable
     private fun Eintrag(entry: SamsungMeal) {
-        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-            Text(entry.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Text(kcal(entry.calories), fontSize = 16.sp)
+        val v = LocalVault.current
+        HorizontalDivider(color = v.linie, modifier = Modifier.padding(vertical = 6.dp))
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(entry.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = v.text, modifier = Modifier.weight(1f))
+            Text(kcal(entry.calories), style = Zahl.copy(fontSize = 15.sp), color = v.text)
         }
     }
 
     @Composable
     private fun Gericht(meal: PlannedMeal) {
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)) {
-            Text(meal.recipeName, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Text(kcal(meal.nutrition.calories), fontSize = 16.sp)
+        val v = LocalVault.current
+        HorizontalDivider(color = v.linie, modifier = Modifier.padding(vertical = 6.dp))
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(meal.recipeName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = v.text, modifier = Modifier.weight(1f))
+            Text(kcal(meal.nutrition.calories), style = Zahl.copy(fontSize = 15.sp), color = v.text)
         }
         meal.ingredients.forEach { Zutat(meal, it) }
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = { scale(meal, 0.5) }, enabled = !isSyncing) { Text("½×") }
-            TextButton(onClick = { scale(meal, 1.0) }, enabled = !isSyncing) { Text("1×") }
-            TextButton(onClick = { scale(meal, 2.0) }, enabled = !isSyncing) { Text("2×") }
+            Pille("½×", enabled = !isSyncing) { scale(meal, 0.5) }
+            Pille("1×", enabled = !isSyncing) { scale(meal, 1.0) }
+            Pille("2×", enabled = !isSyncing) { scale(meal, 2.0) }
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = { reload(meal) }, enabled = !isSyncing) { Text("Neu laden") }
+            Pille("Neu laden", enabled = !isSyncing, icon = Lucide.RotateCcw) { reload(meal) }
         }
     }
 
     @Composable
     private fun Zutat(meal: PlannedMeal, ingredient: Ingredient) {
+        val v = LocalVault.current
         val key = meal.entryId to ingredient.name
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(ingredient.name, fontSize = 15.sp)
+                Text(ingredient.name, style = MaterialTheme.typography.bodyMedium, color = v.text)
                 val warning = ingredient.warning
                 if (warning != null) {
-                    Text("⚠ $warning", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                    Text("⚠ $warning", style = MaterialTheme.typography.bodySmall, color = v.warnung)
                 } else {
-                    Text(kcal(ingredient.nutrition?.calories), fontSize = 13.sp)
+                    Text(kcal(ingredient.nutrition?.calories), style = Zahl.copy(fontSize = 12.sp), color = v.leise)
                 }
             }
             if (ingredient.amount != null) {
-                OutlinedTextField(
+                MengenFeld(
                     value = gramTexts[key] ?: amountText(ingredient.amount, ingredient.unit),
+                    einheit = ingredient.unit,
+                    enabled = !isSyncing,
                     onValueChange = { text ->
                         gramTexts = gramTexts + (key to text)
                         text.replace(',', '.').toDoubleOrNull()?.takeIf { it >= 0.0 }?.let { amount ->
@@ -552,20 +684,22 @@ class MainActivity : ComponentActivity() {
                             recompute()
                         }
                     },
-                    enabled = !isSyncing,
-                    singleLine = true,
-                    suffix = { Text(ingredient.unit) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.width(120.dp),
                 )
-                TextButton(onClick = { setGrams(mapOf(key to 0.0)) }, enabled = !isSyncing) { Text("✕") }
+                IconButton(onClick = { setGrams(mapOf(key to 0.0)) }, enabled = !isSyncing, modifier = Modifier.size(36.dp)) {
+                    Icon(Lucide.X, contentDescription = "Entfernen", tint = v.leise, modifier = Modifier.size(16.dp))
+                }
             }
         }
     }
 
     private fun kcal(value: Double?): String =
-        if (value == null) "— kcal" else "${zahl(value, 0)} kcal"
+        if (value == null) "— kcal" else "${deutsch(value, 0)} kcal"
 
-    private fun zahl(value: Double?, stellen: Int): String? =
-        value?.let { String.format(Locale.US, "%.${stellen}f", it) }
+    /** Wie die Tagesuebersicht: deutsches Zahlenformat, Punkt als Tausendertrenner. */
+    private fun deutsch(value: Double?, stellen: Int): String? = value?.let {
+        val format = java.text.NumberFormat.getNumberInstance(Locale.GERMANY)
+        format.minimumFractionDigits = stellen
+        format.maximumFractionDigits = stellen
+        format.format(it)
+    }
 }
