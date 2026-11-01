@@ -22,7 +22,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.example.synchealth.essen.Ingredient
 import com.example.synchealth.essen.MealMerge
-import com.example.synchealth.essen.MealStore
 import com.example.synchealth.essen.PlannedMeal
 import com.example.synchealth.essen.SamsungMeal
 import com.example.synchealth.essen.Slot
@@ -42,7 +41,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.time.LocalDate
 import java.util.Locale
 
@@ -53,7 +51,6 @@ class MainActivity : ComponentActivity() {
     private var health: HealthRepository? = null
     private lateinit var credentials: CredentialStore
     private lateinit var screenTime: ScreenTimeReader
-    private lateinit var mealStore: MealStore
 
     private var selectedDate by mutableStateOf(LocalDate.now())
     private var healthReport by mutableStateOf(HealthReport())
@@ -62,22 +59,24 @@ class MainActivity : ComponentActivity() {
     private var hinweise by mutableStateOf<List<String>>(emptyList())
 
     /**
-     * Alles, was fuer einen Tag gelesen wird. Gehalten, damit eine Aenderung in der App
-     * sofort neu gerechnet wird, ohne jedes Mal Samsung und Tandoor zu fragen.
+     * Alles, was fuer einen Tag aus dem Netz kommt. Gehalten, damit eine Aenderung in der
+     * App sofort neu gerechnet wird, ohne jedes Mal Samsung, Tandoor und die Notiz zu fragen.
      */
     private data class Inputs(
         val date: LocalDate,
         val samsung: HealthReport,
         val samsungMeals: List<SamsungMeal>,
         val tandoor: TandoorSource.Outcome?,
-        /** Was beim letzten Sync fuer den Tag galt, siehe [MealStore]. */
-        val stored: MealMerge.Existing?,
+        /** `null`, wenn es die Notiz nicht gibt oder kein Vault eingetragen ist. */
+        val note: String?,
+        /** Warum [note] fehlt, sonst leer. */
+        val noteHints: List<String>,
     )
 
     private var inputs by mutableStateOf<Inputs?>(null)
     private var meals by mutableStateOf<MealMerge.Result?>(null)
 
-    /** Aenderungen aus der App, die noch nicht gespeichert sind. Gespeichert wird beim Sync. */
+    /** Aenderungen aus der App, die noch nicht in der Notiz stehen. */
     private var edits by mutableStateOf(MealMerge.Edits())
 
     /** Welche Mahlzeiten aufgeklappt sind. Beim Oeffnen ist alles zu. */
@@ -105,7 +104,6 @@ class MainActivity : ComponentActivity() {
 
         credentials = CredentialStore(this)
         screenTime = ScreenTimeReader(this)
-        mealStore = MealStore(File(filesDir, "essen"))
         hasScreenTimeAccess = screenTime.hasAccess()
 
         try {
@@ -175,21 +173,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Rechnet den Tag aus [current] und den offenen [edits], ohne Netz. Dieselbe Rechnung
-     * dient zum Anzeigen und zum Sync: Die App zeigt, was sie schreiben wuerde.
-     */
-    private fun compute(current: Inputs): Pair<MealMerge.Result, HealthReport> {
-        val result = MealMerge.merge(LocalDate.now(), current.stored, current.tandoor, edits)
-        return result to DailyTotals.merge(current.samsung, result.nutrition)
-    }
+    /** Rechnet den Tag aus [content] und den offenen [edits], ohne Netz, siehe [DayNote]. */
+    private fun compute(
+        current: Inputs,
+        content: String? = current.note,
+        pending: MealMerge.Edits = edits,
+    ): DayNote.Result =
+        DayNote.build(
+            content = content,
+            today = LocalDate.now(),
+            samsung = current.samsung,
+            samsungMeals = current.samsungMeals,
+            tandoor = current.tandoor,
+            edits = pending,
+        )
 
     private fun recompute() {
         val current = inputs ?: return
-        val (result, report) = compute(current)
-        meals = result
-        healthReport = report
-        hinweise = result.notes
+        val result = compute(current)
+        meals = result.meals
+        healthReport = result.report
+        hinweise = current.noteHints + result.notes
     }
 
     /**
@@ -198,7 +202,8 @@ class MainActivity : ComponentActivity() {
      * Tandoor wird auch beim blossen Anschauen abgefragt, nicht erst beim Sync: Die App
      * soll anzeigen, was sie schreiben wuerde. Stuende hier eine andere Zahl als spaeter
      * in der Notiz, waere genau der blinde Fleck zurueck, der die Drive-Fassung monatelang
-     * Erfolg melden liess.
+     * Erfolg melden liess. Aus demselben Grund wird auch die Notiz gelesen: Was dort unter
+     * `## Essen` steht, gilt.
      */
     private suspend fun readInputs(repo: HealthRepository, date: LocalDate): Inputs {
         // Ohne erteilten Zugriff und an einem Tag ohne Ereignisse kommen 0.0 Stunden
@@ -211,8 +216,22 @@ class MainActivity : ComponentActivity() {
                 TandoorSource(TandoorClient(it.baseUrl, it.token), it.marker, it.eaters).read(date)
             }
         }
-        val stored = withContext(Dispatchers.IO) { mealStore.load(date) }
-        return Inputs(date, samsung, samsungMeals, tandoor, stored)
+        val access = credentials.load()
+        val (note, hints) = if (access == null) {
+            null to listOf("Kein Vault-Zugang eingetragen")
+        } else {
+            val read = withContext(Dispatchers.IO) {
+                val client = WebDavClient(access.baseUrl, access.username, access.password)
+                DailyNoteSync(client, access.dailyNotes).read(date)
+            }
+            when (read) {
+                is DailyNoteSync.ReadOutcome.Found -> read.content to emptyList()
+                DailyNoteSync.ReadOutcome.Missing -> null to listOf("Tagesnotiz $date gibt es nicht")
+                DailyNoteSync.ReadOutcome.Unauthorized -> null to listOf("Vault: Anmeldung abgelehnt")
+                is DailyNoteSync.ReadOutcome.Failed -> null to listOf("Vault: ${read.code} ${read.detail}")
+            }
+        }
+        return Inputs(date, samsung, samsungMeals, tandoor, note, hints)
     }
 
     private fun clearEdits() {
@@ -263,23 +282,24 @@ class MainActivity : ComponentActivity() {
                 val date = selectedDate
                 val fresh = readInputs(repo, date)
                 inputs = fresh
-                val (result, report) = compute(fresh)
+                // Nach einem 412 rechnet DailyNoteSync mit dem frisch gelesenen Inhalt noch
+                // einmal, deshalb wird der Tag hier je Inhalt gebaut und nicht vorher.
+                val pending = edits
+                var last: DayNote.Result? = null
                 val outcome = withContext(Dispatchers.IO) {
                     val client = WebDavClient(access.baseUrl, access.username, access.password)
-                    DailyNoteSync(client, access.dailyNotes).sync(date, report)
+                    DailyNoteSync(client, access.dailyNotes).sync(date) { content ->
+                        compute(fresh, content, pending).also { last = it }.patch!!
+                    }
                 }
-                Log.d(TAG, "Sync $date: $outcome, Hinweise ${result.notes}")
-
-                // Erst wenn die Summe in der Notiz steht, gilt der Stand auch auf dem Handy.
-                // Sonst stuenden dort Anpassungen, die die Notiz nie gesehen hat.
+                val notes = last?.notes.orEmpty()
+                Log.d(TAG, "Sync $date: $outcome, Hinweise $notes")
                 if (outcome is DailyNoteSync.Outcome.Written || outcome is DailyNoteSync.Outcome.NothingToDo) {
-                    val saved = result.meals?.let { MealMerge.Existing(result.firstSync, it) }
-                    if (saved != null) withContext(Dispatchers.IO) { mealStore.save(date, saved) }
                     clearEdits()
-                    inputs = fresh.copy(stored = saved ?: fresh.stored)
+                    inputs = readInputs(repo, date)
                 }
                 recompute()
-                snackbar.showSnackbar(describe(outcome, result.notes))
+                snackbar.showSnackbar(describe(outcome, notes))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

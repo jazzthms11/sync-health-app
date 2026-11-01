@@ -45,7 +45,15 @@ class DailyNoteSync(
         data class Failed(val code: Int, val detail: String) : Outcome
     }
 
-    fun sync(date: LocalDate, report: HealthReport): Outcome {
+    fun sync(date: LocalDate, report: HealthReport): Outcome =
+        sync(date) { NotePatcher.patch(it, report) }
+
+    /**
+     * Wie oben, aber [transform] entscheidet, was aus dem Inhalt wird. Es wird nach einem
+     * `412` auf den frisch gelesenen Inhalt erneut angewendet und darf deshalb nur
+     * rechnen, nicht ins Netz gehen.
+     */
+    fun sync(date: LocalDate, transform: (String) -> NotePatcher.Result): Outcome {
         // Zwei Anlaeufe: Nach einem 412 ist der Inhalt veraltet, also neu lesen und nochmal.
         repeat(2) {
             val located = locate(date)
@@ -56,7 +64,7 @@ class DailyNoteSync(
                 is Located.Failed -> return Outcome.Failed(located.code, located.detail)
             }
 
-            val patch = NotePatcher.patch(note.content, report)
+            val patch = transform(note.content)
             if (patch.unchanged) return Outcome.NothingToDo(patch.skipped, patch.missing)
 
             when (val result = client.put(note.path, patch.content, note.etag)) {
@@ -68,6 +76,21 @@ class DailyNoteSync(
             }
         }
         return Outcome.Conflict
+    }
+
+    /** Nur lesen, fuer die Anzeige. */
+    sealed interface ReadOutcome {
+        data class Found(val content: String) : ReadOutcome
+        data object Missing : ReadOutcome
+        data object Unauthorized : ReadOutcome
+        data class Failed(val code: Int, val detail: String) : ReadOutcome
+    }
+
+    fun read(date: LocalDate): ReadOutcome = when (val located = locate(date)) {
+        is Located.Found -> ReadOutcome.Found(located.content)
+        Located.Missing -> ReadOutcome.Missing
+        Located.Unauthorized -> ReadOutcome.Unauthorized
+        is Located.Failed -> ReadOutcome.Failed(located.code, located.detail)
     }
 
     private sealed interface Located {

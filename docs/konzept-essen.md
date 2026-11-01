@@ -1,14 +1,16 @@
 # Konzept: Essen aus Tandoor anpassen und aufschluesseln
 
-Stand: 01.11.2026, Branch `zutaten`. Die ausfuehrliche Ablage in der Tagesnotiz
-(`## Essen` mit Callouts) kommt auf dem Branch `obsidian-essen` dazu.
+Stand: 24.10.2026. Branch `obsidian-essen`, aufbauend auf `zutaten`. Ohne diesen Branch
+bleibt die Tagesnotiz bei den Summen, und der Stand je Tag liegt auf dem Handy
+(`essen/MealStore.kt`).
 
 ## Ziel
 
 - Sehen, welches Rezept welche Naehrwerte beitraegt, bis hinunter zur Zutat.
 - Die geplanten Mahlzeiten fuer einen Tag anpassen: Gramm je Zutat, Faktor fuers
   ganze Gericht (halb, doppelt), Zutaten weglassen.
-- Die Tagesnotiz bekommt wie bisher nur die Summen.
+- Mahlzeiten und Zutaten lesbar in der Tagesnotiz ablegen, damit sie sich spaeter mit
+  Haut, Laune usw. vergleichen lassen.
 
 ## Verworfen
 
@@ -23,25 +25,69 @@ Stand: 01.11.2026, Branch `zutaten`. Die ausfuehrliche Ablage in der Tagesnotiz
 ```
 Tandoor ──(Plan + Zutaten)──▶ SyncHealth ◀── Samsung Health (Fruehstueck, Snacks, Extras)
                                │  anzeigen, anpassen
-                               ├──▶ Handy (Stand je Tag, mit eigenen Anpassungen)
                                ▼
-                            Obsidian (Tagesnotiz: nur die Summen, wie bisher)
+                            Obsidian (Tagesnotiz = Ablage und Wahrheit)
 ```
 
 Samsung Health bleibt nur Quelle zum Lesen. Extras, die nicht im Rezept stehen
 (z. B. noch Parmesan drueber), werden dort eingetragen.
 
-## Speichern
+## Tagesnotiz
 
-- **Die Tagesnotiz bleibt, wie sie war.** SyncHealth schreibt nur die Summen unter
-  `# Daten` (Kalorien, Protein, ...). Gerichte und Zutaten stehen nicht in der Notiz.
-- **Der Stand je Tag liegt auf dem Handy** (`essen/MealStore.kt`), eine JSON-Datei je
-  Tag im App-Speicher: Gerichte, Zutaten mit geplanter und eigener Menge, Naehrwerte je
-  Einheit und der Tag des ersten Syncs.
-- **Gespeichert wird beim Sync**, und nur wenn die Summe in der Notiz angekommen ist. Bis
-  dahin zeigt die App "Ungespeicherte Aenderungen".
-- Wird die App deinstalliert oder ihr Speicher geloescht, ist der Stand weg. Die Summen
-  in der Notiz bleiben; ein neuer Sync rechnet wieder nach Plan.
+Ein eigener Abschnitt `## Essen` zwischen `## Notizen` und `## Daten`, gesetzt wie die
+anderen H2-Ueberschriften. Darin je Mahlzeit ein eingeklappter `[!mahlzeit]`-Callout. Den
+Abschnitt selbst klappt `00 System/tagesuebersicht.js` im Vault beim Oeffnen zu, wie
+`## Daten` (Obsidian speichert den Klappzustand einer Ueberschrift nicht in der Datei).
+Zutaten stehen als Dataview-Felder in Klammer-Form, die Obsidian sauber als
+"**Tomaten:** 120" darstellt.
+
+Bis zum 25.10.2026 stand alles eine Ebene tiefer in einem `> [!info]- Essen`-Callout
+unter `## Notizen`. Die App liest diese Form weiter und ersetzt sie beim naechsten Sync.
+
+Der erster-sync-Kommentar steht im ersten Callout, nicht frei unter der Ueberschrift:
+`%%` blendet Obsidian nur in der Leseansicht aus, im Bearbeitungsmodus stuende er grau da.
+
+```markdown
+## Essen
+
+> [!mahlzeit]- Fruehstueck · 520 kcal
+> %% synchealth erster-sync=2026-10-24 %%
+> - Haferflocken mit Beeren · 380 kcal
+> - Kaffee mit Milch · 140 kcal
+
+> [!mahlzeit]- Mittag · 740 kcal
+> **Bowl** · 660 kcal
+> - [Vollkornreis:: 100]
+> - [Tomate:: 100]
+> - [Zutat Zucker:: 3.5]
+> - [Parmesan:: 30] ⚠ ohne Naehrwerte
+> - Fladenbrot ⚠ ohne Grammangabe
+> %% synchealth eintrag=259 rezept=13
+> Vollkornreis | 100 | 3.56 0.0889 0.0111 0.035 0.007
+> ...
+> %%
+>
+> **Samsung Health**
+> - Apfel · 80 kcal
+
+> [!mahlzeit]- Snacks · 300 kcal
+> - Riegel · 300 kcal
+
+## Daten
+...
+```
+
+- **Zutaten stehen nur in Gramm und ohne Einheit** in Klammer-Form (`[Tomaten:: 120]`), damit Dataview
+  sie als Zahl liest. Auch "4 Stueck" erscheinen als Gramm, ueber Tandoors
+  `conversions`. Gewuerze ohne Menge (0 g) werden weggelassen.
+- **Samsung-Eintraege** stehen mit Titel und kcal unter ihrer Mahlzeitenart aus
+  Samsung Health. Ein Samsung-Eintrag "Mittag" steht also neben Tandoors Mittagessen.
+- **Tandoor-Gerichte** bringen Zutaten in Gramm, schon auf den eigenen Anteil
+  umgerechnet (Portionen / Tage / Esser wie bisher in `MealPlanMath`).
+- **Naehrwerte je Gramm** stehen unsichtbar als `%% ... %%`-Kommentar im Abschnitt.
+  Damit laesst sich eine Mahlzeit neu rechnen, ohne Tandoor zu fragen.
+- Die Felder unter `# Daten` (Kalorien, Protein, ...) bleiben wie heute und tragen die
+  Summe aus dem Callout.
 
 ## Regeln
 
@@ -58,11 +104,22 @@ Samsung Health bleibt nur Quelle zum Lesen. Extras, die nicht im Rezept stehen
   markiert. Der Rest des Tages wird trotzdem geschrieben. Das loest die heutige Regel
   ab, nach der dann alle fuenf Felder leer bleiben.
 
+### Aendern in App und Obsidian
+
+- **Die Notiz ist die Wahrheit.** SyncHealth liest sie, bevor etwas in der App
+  angezeigt oder geaendert wird, und schreibt beim Speichern sofort zurueck.
+- **Aenderungen gehen an beiden Stellen.** Gramm, die in Obsidian von Hand geaendert
+  werden, uebernimmt der naechste Sync.
+- **Summen rechnet nur SyncHealth.** Nach einer Aenderung in Obsidian stimmen die kcal
+  im Callout und die Felder unter `# Daten` erst nach dem naechsten Sync.
+- **Unlesbare Zeilen werden nicht ueberschrieben.** SyncHealth meldet sie, korrigiert
+  wird von Hand.
+
 ### Frisch und fest
 
 - **Bis 7 Tage nach dem ersten Sync** eines Tages holt jeder Sync Tandoor neu.
   Korrekturen am Rezept kommen so von selbst an. Das Datum des ersten Syncs steht im
-  gespeicherten Stand.
+  Kommentar (`erster-sync`).
 - **Danach ist der Tag fest.** Tandoor wird fuer ihn nicht mehr gefragt, spaetere
   Rezeptaenderungen wirken nicht rueckwirkend. Gramm lassen sich weiter aendern.
 - **Knopf "Aus Tandoor neu laden"** je Mahlzeit in der App, auch fuer feste Tage.
@@ -96,6 +153,19 @@ Felder:
   `conversions` mit der Menge in anderen Einheiten.
 - Gramm gibt es nur, wenn die Zutat in g/kg steht oder eine Umrechnung gepflegt ist.
 
+## Offen
+
+Nichts. Entschieden am 24.10.2026:
+
+- **Vorsatz `Zutat ` nur bei Kollision.** Heisst eine Zutat wie ein Feld der Notiz
+  (Messwert, Habit, Kontextfeld), steht sie als `[Zutat Zucker:: 3.5]`, sonst ohne.
+  Die belegten Namen liest die App aus der Notiz selbst.
+- **Gleiche Zutat in zwei Mahlzeiten** steht zweimal da, Abfragen rechnen mit `sum()`.
+- `tagesuebersicht.js` und `vault-check.py` sind nicht betroffen, beide lesen nur
+  Zeilen, die mit `- ` beginnen.
+- `Essen tracken` im Test-Template von `NotePatcherTest` ist veraltet, im Vault gibt es
+  das Feld nicht.
+- Unterrezepte werden seit dem 27.10.2026 aufgeklappt, siehe unten.
 
 ## Unterrezepte
 
@@ -136,3 +206,19 @@ Zutaten.
   Dressing), Lasagne mit Hackfleisch je 1 Stück Bolognese und Bechamel (stand auf 0),
   Butter Chicken 4 Stück Naan. Am Lebensmittel Naan gelten die Werte jetzt je 2 Stück.
 
+## Vor dem Bauen pruefen
+
+1. ~~Ein Rezept von der eigenen Tandoor-Instanz lesen~~: erledigt, siehe oben.
+2. ~~Testnotiz~~: am 24.10.2026 bestanden. Dataview findet Felder in verschachtelten
+   Callouts, auch mit Leerzeichen im Namen (`rote-linsen`), liest sie als Zahl, und
+   `[Parmesan:: 30] ⚠ ...` bleibt trotz Warnung eine Zahl. Der `%%`-Kommentar ist in
+   der Leseansicht unsichtbar.
+
+## Umsetzung
+
+Auf eigenem Branch, nur auf dem eigenen Handy. Leo bekommt es erst, wenn es laeuft.
+
+## Vault
+
+Die Tagesnotiz ist laut `00 System/Tagesnotizsystem.md` eine Pipeline. Der neue
+Essen-Callout muss dort beschrieben werden, bevor SyncHealth ihn schreibt.
